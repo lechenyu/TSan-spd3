@@ -30,3 +30,6 @@ WTFAnnotate*
 RunningOnValgrind
 ValgrindSlowdown
 __tsan_print
+insert_tree_node
+insert_leaf
+printDPST
