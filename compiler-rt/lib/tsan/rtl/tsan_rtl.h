@@ -48,6 +48,10 @@
 #include "tsan_trace.h"
 #include "tsan_vector_clock.h"
 
+#ifndef DATA_STRUCTURE_H
+#include "data_structure.h"
+#endif
+
 #if SANITIZER_WORDSIZE != 64
 # error "ThreadSanitizer is supported only on 64-bit platforms"
 #endif
@@ -156,6 +160,8 @@ struct TidSlot {
 
 // This struct is stored in TLS.
 struct ThreadState {
+  tree_node* current_task_node;
+
   FastState fast_state;
   int ignore_sync;
 #if !SANITIZER_GO

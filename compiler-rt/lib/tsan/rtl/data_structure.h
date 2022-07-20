@@ -1,3 +1,6 @@
+#ifndef   DATA_STRUCTURE_H
+#define   DATA_STRUCTURE_H
+
 extern "C" {
 enum node_type{
     ROOT,
@@ -20,6 +23,7 @@ typedef struct tree_node{
     struct tree_node *children_list_head;
     struct tree_node *children_list_tail;
     struct tree_node *next_sibling;
+    struct tree_node *current_finish_node;
     tree_node();
 } tree_node;
 
@@ -46,3 +50,5 @@ typedef struct task_t{
 } task_t;
 
 }
+
+#endif

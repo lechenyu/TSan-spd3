@@ -1,9 +1,14 @@
-#include "data_structure.h"
-
 #include "sanitizer_common/sanitizer_internal_defs.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
+#include "tsan_rtl.h"
+
+#ifndef DATA_STRUCTURE_H
+#include "data_structure.h"
+#endif
 
 using namespace __tsan;
+
+extern "C" {
 
 // dpst data structure
 struct dpst DPST;
@@ -11,9 +16,15 @@ struct dpst DPST;
 char node_char[6] = {'R','F','A','f','S','W'};
 static int node_index = 0;
 
-extern "C" {
 tree_node::tree_node(){
 
+}
+
+INTERFACE_ATTRIBUTE
+void putNodeInCurThread(tree_node* node){
+    // Printf("new task node index is %d \n", node->index);
+    ThreadState* current_thread = cur_thread();
+    current_thread->current_task_node = node;
 }
 
 /**
@@ -28,6 +39,8 @@ tree_node* newtreeNode()
     node->children_list_head = nullptr;
     node->children_list_tail = nullptr;
     node->next_sibling = nullptr;
+    node->current_finish_node = nullptr;
+
     node->corresponding_task_id = -2;
     node->number_of_child = 0;
     node->is_parent_nth_child = 0;

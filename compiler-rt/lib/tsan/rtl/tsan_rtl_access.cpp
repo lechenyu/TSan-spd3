@@ -429,27 +429,67 @@ NOINLINE void TraceRestartMemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
                                      uptr size, AccessType typ) {
   RawShadow* shadow_mem = MemToShadow(addr);
-  UNUSED char memBuf[4][64];
-  DPrintf2("#%d: Access: %d@%d %p/%zd typ=0x%x {%s, %s, %s, %s}\n", thr->tid,
-           static_cast<int>(thr->fast_state.sid()),
-           static_cast<int>(thr->fast_state.epoch()), (void*)addr, size,
-           static_cast<int>(typ), DumpShadow(memBuf[0], shadow_mem[0]),
-           DumpShadow(memBuf[1], shadow_mem[1]),
-           DumpShadow(memBuf[2], shadow_mem[2]),
-           DumpShadow(memBuf[3], shadow_mem[3]));
-
   FastState fast_state = thr->fast_state;
-  Shadow cur(fast_state, addr, size, typ);
 
-  LOAD_CURRENT_SHADOW(cur, shadow_mem);
-  if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
-    return;
-  if (UNLIKELY(fast_state.GetIgnoreBit()))
-    return;
-  if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
-    return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
-  CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
+  tree_node* thr_current_task_node = thr->current_task_node;
+  if(thr_current_task_node != nullptr && thr_current_task_node->corresponding_task_id >= 0){
+
+    tree_node* step_node;
+    if(thr_current_task_node->current_finish_node == nullptr){
+      step_node = thr_current_task_node->children_list_tail;
+    }
+    else{
+      tree_node* finish_node = thr_current_task_node->current_finish_node;
+      step_node = finish_node->children_list_tail;
+    }
+    Printf("Tsan! MemoryAccess by task %d, step node index is %d \n", thr_current_task_node->corresponding_task_id, step_node->index);
+
+    Shadow cur(fast_state, step_node->index, addr, size, typ);
+    
+    DCHECK_EQ(step_node->index,cur.step_nod_id());
+    uptr shadow_size, shadow_addr;
+    AccessType shadow_typ;
+    cur.GetAccess(&shadow_addr, &shadow_size, &shadow_typ);
+    DCHECK_EQ(typ & kAccessAtomic, shadow_typ & kAccessAtomic);
+    DCHECK_EQ(typ & kAccessRead, shadow_typ & kAccessRead);
+    DCHECK_EQ(size, shadow_size );
+    DCHECK_EQ(addr & 0x7, shadow_addr );
+  }
+  
+  // LOAD_CURRENT_SHADOW(cur, shadow_mem);
+  // if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
+  //   return;
+  // if (UNLIKELY(fast_state.GetIgnoreBit()))
+  //   return;
+  // if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
+  //   return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
+  // CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
 }
+
+// ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
+//                                      uptr size, AccessType typ) {
+//   RawShadow* shadow_mem = MemToShadow(addr);
+//   UNUSED char memBuf[4][64];
+//   DPrintf2("#%d: Access: %d@%d %p/%zd typ=0x%x {%s, %s, %s, %s}\n", thr->tid,
+//            static_cast<int>(thr->fast_state.sid()),
+//            static_cast<int>(thr->fast_state.epoch()), (void*)addr, size,
+//            static_cast<int>(typ), DumpShadow(memBuf[0], shadow_mem[0]),
+//            DumpShadow(memBuf[1], shadow_mem[1]),
+//            DumpShadow(memBuf[2], shadow_mem[2]),
+//            DumpShadow(memBuf[3], shadow_mem[3]));
+
+//   FastState fast_state = thr->fast_state;
+//   Shadow cur(fast_state, addr, size, typ);
+
+//   LOAD_CURRENT_SHADOW(cur, shadow_mem);
+//   if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
+//     return;
+//   if (UNLIKELY(fast_state.GetIgnoreBit()))
+//     return;
+//   if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
+//     return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
+//   CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
+// }
 
 void MemoryAccess16(ThreadState* thr, uptr pc, uptr addr, AccessType typ);
 

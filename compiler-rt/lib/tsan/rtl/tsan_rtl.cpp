@@ -407,6 +407,7 @@ ThreadState::ThreadState(Tid tid)
 #endif
   shadow_stack_pos = shadow_stack;
   shadow_stack_end = shadow_stack + kInitStackSize;
+  this->current_task_node = nullptr;
 }
 
 #if !SANITIZER_GO

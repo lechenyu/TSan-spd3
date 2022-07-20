@@ -33,3 +33,4 @@ __tsan_print
 insert_tree_node
 insert_leaf
 printDPST
+putNodeInCurThread

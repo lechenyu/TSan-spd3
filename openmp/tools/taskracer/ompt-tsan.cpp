@@ -3,6 +3,7 @@
 #include "omp-tools.h"
 #include "dlfcn.h"
 
+#ifndef DATA_STRUCTURE_H
 enum node_type{
     ROOT,
     FINISH,
@@ -24,6 +25,7 @@ typedef struct tree_node{
     struct tree_node *children_list_head;
     struct tree_node *children_list_tail;
     struct tree_node *next_sibling;
+    struct tree_node *current_finish_node;
 } tree_node;
 
 
@@ -39,7 +41,7 @@ typedef struct task_t{
   finish_t* belong_to_finish;
   finish_t* current_finish;
 } task_t;
-
+#endif
 
 extern "C" {
 void __attribute__((weak)) __tsan_print();
@@ -49,6 +51,9 @@ tree_node* __attribute__((weak))  insert_tree_node(enum node_type nodeType, tree
 tree_node* __attribute__((weak))  insert_leaf(tree_node *task_node);
 
 void __attribute__((weak))  printDPST();
+
+void __attribute__((weak))  putNodeInCurThread(tree_node* node);
+
 } // extern "C"
 
 
@@ -75,7 +80,7 @@ ompt_get_task_info_t ompt_get_task_info;
 ompt_set_callback_t ompt_set_callback;
 
 
-static int task_id_counter = 1;
+static std::atomic<int> task_id_counter(1);
 
 
 static void ompt_ta_parallel_begin
@@ -88,14 +93,14 @@ static void ompt_ta_parallel_begin
   const void *codeptr_ra
 )
 {
-  assert(encountering_task_data->ptr != NULL);
+  assert(encountering_task_data->ptr != nullptr);
   // insert a FINISH node because of the implicit barrier
   task_t* current_task = (task_t*) encountering_task_data->ptr;
   tree_node* current_task_node = current_task->node_in_dpst;
 
   // 1. Update DPST
   tree_node* new_finish_node;
-  if(current_task->current_finish == NULL){
+  if(current_task->current_finish == nullptr){
     new_finish_node = insert_tree_node(FINISH,current_task_node);
   }
   else{
@@ -108,14 +113,15 @@ static void ompt_ta_parallel_begin
   finish_t* finish = (finish_t*) malloc(sizeof(finish_t));
   finish->node_in_dpst = new_finish_node;
 
-  if(current_task->current_finish == NULL){
-    finish->parent = NULL;
+  if(current_task->current_finish == nullptr){
+    finish->parent = nullptr;
   }
   else{
     finish->parent = current_task->current_finish;
   }
 
   current_task->current_finish = finish;
+  current_task_node->current_finish_node = new_finish_node;
 
 
   parallel_data->ptr = encountering_task_data->ptr;
@@ -130,18 +136,19 @@ static void ompt_ta_parallel_end
   const void *codeptr_ra
 )
 {
-  assert(encountering_task_data->ptr != NULL);
-  printf("parall end callback \n");
+  assert(encountering_task_data->ptr != nullptr);
 
-  // set current_task->current_finish to either NULL or another finish (nested finish)
+  // set current_task->current_finish to either nullptr or another finish (nested finish)
   task_t* current_task = (task_t*) encountering_task_data->ptr;
   finish_t* the_finish = current_task->current_finish;
 
-  if(the_finish->parent == NULL){
-    current_task->current_finish = NULL;
+  if(the_finish->parent == nullptr){
+    current_task->current_finish = nullptr;
+    current_task->node_in_dpst->current_finish_node = nullptr;
   }
   else{
     current_task->current_finish = the_finish->parent;
+    current_task->node_in_dpst->current_finish_node = the_finish->parent->node_in_dpst;
   }
 }
 
@@ -160,47 +167,27 @@ static void ompt_ta_implicit_task(
       printf("OMPT! initial task begins, should only appear once !! \n");
 
       // DPST operation
-      tree_node* root = insert_tree_node(ROOT,NULL);
+      tree_node* root = insert_tree_node(ROOT,nullptr);
       insert_leaf(root);
 
       task_t* main_ti = (task_t*) malloc(sizeof(task_t));
-      main_ti->belong_to_finish = NULL;
+      main_ti->belong_to_finish = nullptr;
       main_ti->id = 0;
       main_ti->parent_id = -1;
       main_ti->node_in_dpst = root;
 
       finish_t* main_finish_placeholder = (finish_t*) malloc(sizeof(finish_t));
       main_finish_placeholder->node_in_dpst = root;
-      main_finish_placeholder->parent = NULL;
+      main_finish_placeholder->parent = nullptr;
       main_ti->current_finish = main_finish_placeholder;
+      main_ti->node_in_dpst->current_finish_node = main_finish_placeholder->node_in_dpst;
 
       task_data->ptr = (void*) main_ti;
     }
   }
   else{
     if(endpoint == ompt_scope_begin){
-      assert(parallel_data->ptr != NULL);
-
-      // try to use ompt_get_task_info
-      // int ancestor_level = 0;
-      // int flags_2;
-      // ompt_data_t *task_data_2;
-      // ompt_frame_t *task_frame_2;
-      // ompt_data_t *parallel_data_2;
-      // int thread_num;
-
-      // int result = ompt_get_task_info(ancestor_level,&flags_2,&task_data_2,&task_frame_2,&parallel_data_2,&thread_num);
-
-      // if(result == 2){
-      //   task_t* task = (task_t*) parallel_data_2->ptr;
-      //   printf("OMPT! current task node's index is %d, the flag is %d, number of thread is %d \n", task->node_in_dpst->index, flags_2, thread_num);
-
-      //   // TODO: the following always fail, as the task_data is always NULL
-      //   // one possible explanation is that at this point, there is not active task, because the thread_num is always zero.
-      //   // task_t* same_task = (task_t*) task_data_2->ptr;
-      //   // printf("OMPT! same task node's node index %lu \n", task_data_2->value);
-      // }
-
+      assert(parallel_data->ptr != nullptr);
 
       // A. Get encountering_task information
       task_t* current_task = (task_t*) parallel_data->ptr;
@@ -210,12 +197,12 @@ static void ompt_ta_implicit_task(
         tree_node* new_task_node;
         tree_node* parent_node;
 
-        if(current_task->current_finish != NULL){
-          // 1. if current task's current_finish is not null, parent_node should be that finish's node
+        if(current_task->current_finish != nullptr){
+          // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
           parent_node = current_task->current_finish->node_in_dpst;
         }
         else{
-          // 2. if current task's current_finish is null, parent_node should be current task's node
+          // 2. if current task's current_finish is nullptr, parent_node should be current task's node
           parent_node = current_task_node;
         }
 
@@ -232,7 +219,7 @@ static void ompt_ta_implicit_task(
         ti->node_in_dpst = new_task_node;
 
         // set new task's belong_to_finish
-        if(current_task->current_finish != NULL){
+        if(current_task->current_finish != nullptr){
           ti->belong_to_finish = current_task->current_finish;
         }
         else{
@@ -257,14 +244,14 @@ static void ompt_ta_sync_region(
   const void *codeptr_ra)
 {
   if(kind == ompt_sync_region_taskgroup && endpoint == ompt_scope_begin){
-    assert(task_data->ptr != NULL);
+    assert(task_data->ptr != nullptr);
 
     task_t* current_task = (task_t*) task_data->ptr;
     tree_node* current_task_node = current_task->node_in_dpst;
 
     // 1. Update DPST
     tree_node* new_finish_node;
-    if(current_task->current_finish == NULL){
+    if(current_task->current_finish == nullptr){
       new_finish_node = insert_tree_node(FINISH,current_task_node);
     }
     else{
@@ -277,39 +264,42 @@ static void ompt_ta_sync_region(
     finish_t* new_finish = (finish_t*) malloc(sizeof(finish_t));
     new_finish->node_in_dpst = new_finish_node;
 
-    if(current_task->current_finish == NULL){
-      new_finish->parent = NULL;
+    if(current_task->current_finish == nullptr){
+      new_finish->parent = nullptr;
     }
     else{
       new_finish->parent = current_task->current_finish;
     }
 
     current_task->current_finish = new_finish;
+    current_task_node->current_finish_node = new_finish->node_in_dpst;
 
   }
   else if (kind == ompt_sync_region_taskgroup && endpoint == ompt_scope_end )
   {
-    assert(task_data->ptr != NULL);
+    assert(task_data->ptr != nullptr);
 
-    // set current_task->current_finish to either NULL or another finish (nested finish)
+    // set current_task->current_finish to either nullptr or another finish (nested finish)
     task_t* current_task = (task_t*) task_data->ptr;
     finish_t* finish = current_task->current_finish;
 
-    if(finish->parent == NULL){
-      current_task->current_finish = NULL;
+    if(finish->parent == nullptr){
+      current_task->current_finish = nullptr;
+      current_task->node_in_dpst->current_finish_node = nullptr;
     }
     else{
       current_task->current_finish = finish->parent;
+      current_task->node_in_dpst->current_finish_node = finish->parent->node_in_dpst;
     }
     
   }
   else if(kind == ompt_sync_region_taskwait && endpoint == ompt_scope_begin){
-    assert(task_data->ptr != NULL);
+    assert(task_data->ptr != nullptr);
     task_t* current_task = (task_t*) task_data->ptr;
 
     // insert a single node (type STEP), mark this as a taskwait step
     tree_node* new_taskwait_node;
-    if(current_task->current_finish == NULL){
+    if(current_task->current_finish == nullptr){
       new_taskwait_node = insert_tree_node(TASKWAIT, current_task->node_in_dpst);
       new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
       insert_leaf(current_task->node_in_dpst);
@@ -330,7 +320,7 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
                                 ompt_data_t *new_task_data, int flags,
                                 int has_dependences, const void *codeptr_ra) 
 {
-  assert(encountering_task_data->ptr != NULL);
+  assert(encountering_task_data->ptr != nullptr);
 
   // A. Get encountering_task information
     task_t* current_task = (task_t*) encountering_task_data->ptr;
@@ -340,12 +330,12 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
     tree_node* new_task_node;
     tree_node* parent_node;
 
-    if(current_task->current_finish != NULL){
-      // 1. if current task's current_finish is not null, parent_node should be that finish's node
+    if(current_task->current_finish != nullptr){
+      // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
       parent_node = current_task->current_finish->node_in_dpst;
     }
     else{
-      // 2. if current task's current_finish is null, parent_node should be current task's node
+      // 2. if current task's current_finish is nullptr, parent_node should be current task's node
       parent_node = current_task_node;
     }
 
@@ -361,7 +351,7 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
     ti->node_in_dpst = new_task_node;
 
     // set new task's belong_to_finish
-    if(current_task->current_finish != NULL){
+    if(current_task->current_finish != nullptr){
       ti->belong_to_finish = current_task->current_finish;
     }
     else{
@@ -375,6 +365,18 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
 }
 
 
+
+static void ompt_ta_task_schedule(
+  ompt_data_t *prior_task_data,
+  ompt_task_status_t prior_task_status,
+  ompt_data_t *next_task_data
+){
+  assert(next_task_data->ptr);
+
+  task_t* next_task = (task_t*) next_task_data->ptr;
+  tree_node* next_task_node = next_task->node_in_dpst;
+  putNodeInCurThread(next_task_node);
+}
 
 
 static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
@@ -397,6 +399,7 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
   SET_CALLBACK(implicit_task);
   SET_CALLBACK(sync_region);
   SET_CALLBACK(parallel_end);
+  SET_CALLBACK(task_schedule);
 
   return 1; // success
 }

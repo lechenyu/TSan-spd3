@@ -74,8 +74,24 @@ class Shadow {
     DCHECK_EQ(epoch(), epoch0);
   }
 
+  Shadow(FastState state, unsigned int step_node_id, u32 addr, u32 size, AccessType typ) {
+    raw_ = state.raw_;
+    DCHECK_GT(size, 0);
+    DCHECK_LE(size, 8);
+
+    raw_ |= (!!(typ & kAccessAtomic) << kIsAtomicShift) |
+            (!!(typ & kAccessRead) << kIsReadShift) |
+            (((((1u << size) - 1) << (addr & 0x7)) & 0xff) << kAccessShift);
+
+    newpart_.stepid = (unsigned) step_node_id;
+    newpart_.is_read_ = !!(typ & kAccessRead);
+    DCHECK_EQ(newpart_.is_read_, !!(typ & kAccessRead));
+  }
+
   explicit Shadow(RawShadow x = Shadow::kEmpty) { raw_ = static_cast<u32>(x); }
 
+  u32 step_nod_id() const {return newpart_.stepid; };
+  
   RawShadow raw() const { return static_cast<RawShadow>(raw_); }
   Sid sid() const { return part_.sid_; }
   Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
@@ -153,9 +169,19 @@ class Shadow {
     u16 is_read_ : 1;
     u16 is_atomic_ : 1;
   };
+
+  struct NewParts
+  {
+    u32 access_ : 8;
+    u32 stepid : 22;
+    u32 is_read_ : 1;
+    u32 is_atomic_ : 1;
+  };
+  
   union {
     Parts part_;
     u32 raw_;
+    NewParts newpart_;
   };
 
   static constexpr u8 kFreeAccess = 0x81;

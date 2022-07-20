@@ -334,7 +334,7 @@ void NORETURN CheckFailed(const char *file, int line, const char *cond,
 #define DCHECK_GE(a, b) CHECK_GE(a, b)
 #else
 #define DCHECK(a)
-#define DCHECK_EQ(a, b)
+#define DCHECK_EQ(a, b) CHECK_IMPL((a), ==, (b))
 #define DCHECK_NE(a, b)
 #define DCHECK_LT(a, b)
 #define DCHECK_LE(a, b)
