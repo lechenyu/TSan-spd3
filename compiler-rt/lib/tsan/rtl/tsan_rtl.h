@@ -58,6 +58,9 @@
 
 namespace __tsan {
 
+void add_step_to_vector(u32 index, tree_node* step);
+bool a_to_the_left_of_b(tree_node* a, tree_node* b);
+
 #if !SANITIZER_GO
 struct MapUnmapCallback;
 #if defined(__mips64) || defined(__aarch64__) || defined(__powerpc__)
@@ -347,6 +350,7 @@ struct Context {
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
+extern Vector<tree_node*> step_nodes;
 
 ALWAYS_INLINE Flags *flags() {
   return &ctx->flags;

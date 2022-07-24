@@ -14,6 +14,7 @@ enum node_type{
 typedef struct tree_node{
     int index;
     int corresponding_task_id;
+    int corresponding_step_index;
     enum node_type this_node_type;
     int depth;
     int number_of_child;

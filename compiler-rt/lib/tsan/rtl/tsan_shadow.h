@@ -58,39 +58,40 @@ class Shadow {
  public:
   static constexpr RawShadow kEmpty = static_cast<RawShadow>(0);
 
-  Shadow(FastState state, u32 addr, u32 size, AccessType typ) {
+  // Shadow(FastState state, u32 addr, u32 size, AccessType typ) {
+  //   raw_ = state.raw_;
+  //   DCHECK_GT(size, 0);
+  //   DCHECK_LE(size, 8);
+  //   UNUSED Sid sid0 = part_.sid_;
+  //   UNUSED u16 epoch0 = part_.epoch_;
+  //   raw_ |= (!!(typ & kAccessAtomic) << kIsAtomicShift) |
+  //           (!!(typ & kAccessRead) << kIsReadShift) |
+  //           (((((1u << size) - 1) << (addr & 0x7)) & 0xff) << kAccessShift);
+  //   // Note: we don't check kAccessAtomic because it overlaps with
+  //   // FastState::ignore_accesses_ and it may be set spuriously.
+  //   DCHECK_EQ(part_.is_read_, !!(typ & kAccessRead));
+  //   DCHECK_EQ(sid(), sid0);
+  //   DCHECK_EQ(epoch(), epoch0);
+  // }
+
+  Shadow(FastState state, u32 step_id, u32 addr, u32 size, AccessType typ)
+  {
     raw_ = state.raw_;
     DCHECK_GT(size, 0);
     DCHECK_LE(size, 8);
-    UNUSED Sid sid0 = part_.sid_;
-    UNUSED u16 epoch0 = part_.epoch_;
-    raw_ |= (!!(typ & kAccessAtomic) << kIsAtomicShift) |
-            (!!(typ & kAccessRead) << kIsReadShift) |
-            (((((1u << size) - 1) << (addr & 0x7)) & 0xff) << kAccessShift);
-    // Note: we don't check kAccessAtomic because it overlaps with
-    // FastState::ignore_accesses_ and it may be set spuriously.
-    DCHECK_EQ(part_.is_read_, !!(typ & kAccessRead));
-    DCHECK_EQ(sid(), sid0);
-    DCHECK_EQ(epoch(), epoch0);
-  }
-
-  Shadow(FastState state, unsigned int step_node_id, u32 addr, u32 size, AccessType typ) {
-    raw_ = state.raw_;
-    DCHECK_GT(size, 0);
-    DCHECK_LE(size, 8);
 
     raw_ |= (!!(typ & kAccessAtomic) << kIsAtomicShift) |
             (!!(typ & kAccessRead) << kIsReadShift) |
             (((((1u << size) - 1) << (addr & 0x7)) & 0xff) << kAccessShift);
 
-    newpart_.stepid = (unsigned) step_node_id;
+    newpart_.stepid = step_id;
     newpart_.is_read_ = !!(typ & kAccessRead);
     DCHECK_EQ(newpart_.is_read_, !!(typ & kAccessRead));
   }
 
   explicit Shadow(RawShadow x = Shadow::kEmpty) { raw_ = static_cast<u32>(x); }
 
-  u32 step_nod_id() const {return newpart_.stepid; };
+  u32 step_node_id() const {return newpart_.stepid; };
   
   RawShadow raw() const { return static_cast<RawShadow>(raw_); }
   Sid sid() const { return part_.sid_; }
@@ -149,7 +150,7 @@ class Shadow {
     FastState fs;
     fs.SetSid(kFreeSid);
     fs.SetEpoch(kEpochLast);
-    Shadow s(fs, 0, 8, kAccessWrite);
+    Shadow s(fs, 0, 0, 8, kAccessWrite);
     return s.raw();
   }
 

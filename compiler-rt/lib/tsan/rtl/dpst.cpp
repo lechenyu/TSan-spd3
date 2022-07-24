@@ -15,6 +15,7 @@ struct dpst DPST;
 
 char node_char[6] = {'R','F','A','f','S','W'};
 static int node_index = 0;
+static int step_index = 1;
 
 tree_node::tree_node(){
 
@@ -48,6 +49,9 @@ tree_node* newtreeNode()
 
     node->index = node_index;
     node_index ++;
+
+    node->corresponding_step_index = -2;
+
     return node;
 }
 
@@ -106,7 +110,6 @@ tree_node* insert_tree_node(enum node_type nodeType, tree_node *parent){
  */
 INTERFACE_ATTRIBUTE
 tree_node* insert_leaf(tree_node *task_node){
-    // HASSERT(task_node);
     tree_node *new_step = newtreeNode();   
     new_step->this_node_type = STEP;
     new_step->parent = task_node;
@@ -129,6 +132,11 @@ tree_node* insert_leaf(tree_node *task_node){
     if(new_step->depth > DPST.height){
         DPST.height = new_step->depth;
     }
+
+    new_step->corresponding_step_index = step_index;
+    add_step_to_vector(step_index, new_step);
+    step_index++;
+
     return new_step;
 }
 

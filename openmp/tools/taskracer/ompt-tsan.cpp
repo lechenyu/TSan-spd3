@@ -16,6 +16,7 @@ enum node_type{
 typedef struct tree_node{
     int index;
     int corresponding_task_id;
+    int corresponding_step_index;
     enum node_type this_node_type;
     int depth;
     int number_of_child;
@@ -375,6 +376,7 @@ static void ompt_ta_task_schedule(
 
   task_t* next_task = (task_t*) next_task_data->ptr;
   tree_node* next_task_node = next_task->node_in_dpst;
+  // printf("OMPT! task_schedule, put task node in current thread \n");
   putNodeInCurThread(next_task_node);
 }
 
