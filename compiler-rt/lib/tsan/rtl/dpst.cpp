@@ -6,7 +6,7 @@
 #include "data_structure.h"
 #endif
 
-using namespace __tsan;
+namespace __tsan{
 
 extern "C" {
 
@@ -14,8 +14,12 @@ extern "C" {
 struct dpst DPST;
 
 char node_char[6] = {'R','F','A','f','S','W'};
-static int node_index = 0;
-static int step_index = 1;
+
+static int node_index_base = 0;
+atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_index_base);
+
+static u32 step_index_base = 1;
+atomic_uint32_t *atomic_step_index = reinterpret_cast<atomic_uint32_t *>(&step_index_base);
 
 tree_node::tree_node(){
 
@@ -36,7 +40,8 @@ void putNodeInCurThread(tree_node* node){
 tree_node* newtreeNode()
 {
     // Allocate memory for new node
-    tree_node* node = new tree_node();
+    // tree_node* node = new tree_node();
+    tree_node* node = (tree_node*) InternalAlloc(sizeof(tree_node));
     node->children_list_head = nullptr;
     node->children_list_tail = nullptr;
     node->next_sibling = nullptr;
@@ -47,8 +52,9 @@ tree_node* newtreeNode()
     node->is_parent_nth_child = 0;
     node->preceeding_taskwait = -1;
 
+    u32 node_index = atomic_load(atomic_node_index,memory_order_acquire);
     node->index = node_index;
-    node_index ++;
+    atomic_store(atomic_node_index,node_index+1,memory_order_consume);
 
     node->corresponding_step_index = -2;
 
@@ -133,75 +139,13 @@ tree_node* insert_leaf(tree_node *task_node){
         DPST.height = new_step->depth;
     }
 
+    u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
     new_step->corresponding_step_index = step_index;
     add_step_to_vector(step_index, new_step);
     step_index++;
+    atomic_store(atomic_step_index,step_index,memory_order_consume);
 
     return new_step;
-}
-
-
-/**
- * @brief  check if node1 precedes node2 in dpst
- * @param  node1: previous step node
- * @param  node2: current step node
- * @retval true if node1 precdes node2 by tree edges 
- */
-INTERFACE_ATTRIBUTE
-bool precede_dpst(tree_node* node1, tree_node* node2){
-  bool node1_precede_node2 = true;
-  bool node1_not_precede_node2 = false;
-
-    if(node1->parent->index == node2->parent->index){
-        // node1 and node2 are step nodes with same parent
-        if(node1->is_parent_nth_child <= node2->is_parent_nth_child){
-          return node1_precede_node2;
-        }
-        else{
-          return node1_not_precede_node2;
-        }
-    }
-    
-    // need to guarantee prev_node is to the left of current_node
-    tree_node* node1_last_node;
-    tree_node* node2_last_node;
-
-    while (node1->depth != node2->depth)
-    {
-        node1_last_node = node1;
-        node2_last_node = node2;
-        if (node1->depth > node2->depth)
-        {
-            node1 = node1->parent;
-        }
-        else{
-            node2 = node2->parent;
-        }
-    }
-
-    while(node1->index != node2->index){
-        node1_last_node = node1;
-        node2_last_node = node2;
-        node1 = node1->parent;
-        node2 = node2->parent;
-    }; // end
-
-    if(node1_last_node->is_parent_nth_child < node2_last_node->is_parent_nth_child){
-        // node1 is to the left of node 2
-        if(
-             (node1_last_node->this_node_type == ASYNC && node2_last_node->preceeding_taskwait < 0)
-          || (node1_last_node->this_node_type == ASYNC && node2_last_node->preceeding_taskwait < node1_last_node->is_parent_nth_child)
-        ){
-          return node1_not_precede_node2;
-        }
-        else{
-            return node1_precede_node2;
-        }
-    }
-
-    // node 1 is to the right of node 2
-    // return false because "node1 doesn't precede node2 by DPST"
-    return node1_not_precede_node2;
 }
 
 
@@ -256,4 +200,16 @@ void printDPST(){
     }
 }
 
+
+INTERFACE_ATTRIBUTE
+void DPSTinfo(){
+    Printf("\n");
+    printDPST();
+
+    Printf("\n");
+    Printf("DPST height is %d, number of nodes is %d, number of step nodes is %d \n", DPST.height, 
+        atomic_load(atomic_node_index, memory_order_acquire), atomic_load(atomic_step_index, memory_order_acquire));
+}
+
 } // extern C
+} // namespace __tsan

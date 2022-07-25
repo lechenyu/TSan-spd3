@@ -28,6 +28,7 @@ class Vector {
   ~Vector() {
     if (begin_)
       InternalFree(begin_);
+    Printf("TSAN! destructor end \n");
   }
 
   void Reset() {

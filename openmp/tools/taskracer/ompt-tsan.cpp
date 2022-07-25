@@ -27,6 +27,7 @@ typedef struct tree_node{
     struct tree_node *children_list_tail;
     struct tree_node *next_sibling;
     struct tree_node *current_finish_node;
+    tree_node();
 } tree_node;
 
 
@@ -51,7 +52,7 @@ tree_node* __attribute__((weak))  insert_tree_node(enum node_type nodeType, tree
 
 tree_node* __attribute__((weak))  insert_leaf(tree_node *task_node);
 
-void __attribute__((weak))  printDPST();
+void __attribute__((weak))  DPSTinfo();
 
 void __attribute__((weak))  putNodeInCurThread(tree_node* node);
 
@@ -407,7 +408,7 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
 }
 
 static void ompt_tsan_finalize(ompt_data_t *tool_data) {
-  printDPST();
+  DPSTinfo();
 }
 
 static bool scan_tsan_runtime() {

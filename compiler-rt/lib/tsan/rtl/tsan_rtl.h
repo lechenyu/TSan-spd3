@@ -60,6 +60,7 @@ namespace __tsan {
 
 void add_step_to_vector(u32 index, tree_node* step);
 bool a_to_the_left_of_b(tree_node* a, tree_node* b);
+bool precede_dpst_new(tree_node* node1, tree_node* node2);
 
 #if !SANITIZER_GO
 struct MapUnmapCallback;

@@ -16,19 +16,83 @@
 namespace __tsan {
 Vector<tree_node*> step_nodes;
 
+/**
+ * @brief check if node a is to the left of node b in dpst
+ * @note 
+ * @param  a: node a
+ * @param  b: node b
+ * @retval true if a is to the left of b; false otherwise
+ */
 bool a_to_the_left_of_b(tree_node* a, tree_node* b){
+  return true;
+
+  if(a->parent->index == b->parent->index){
+    if(a->is_parent_nth_child <= b->is_parent_nth_child){
+      return true;
+    }
     return false;
+  }
+
+  tree_node* a_last_node;
+  tree_node* b_last_node;
+
+  while (a->depth != b->depth)
+  {
+      a_last_node = a;
+      b_last_node = b;
+      if (a->depth > b->depth)
+      {
+          a = a->parent;
+      }
+      else{
+          b = a->parent;
+      }
+  }
+
+  while(a->index != b->index){
+      a_last_node = a;
+      b_last_node = b;
+      a = a->parent;
+      b = b->parent;
+  }; // end
+
+  if(a_last_node->is_parent_nth_child <= b_last_node->is_parent_nth_child){
+    return true;
+  }
+
+  return false;
 }
 
+
+/**
+ * @brief add a step node to the vector steps_node
+ * @note  the upper limit of index is 3000000
+ * @param  index: the index to put the step node
+ * @param  step: the step node
+ * @retval None
+ */
 void add_step_to_vector(u32 index, tree_node* step){
+  // Printf("TSAN! add_step_to_vector: index is %d, step index is %d \n", index, step->corresponding_step_index);
+
   if(step_nodes.Size() == 0){
-    step_nodes.Resize(5000000);
-    step_nodes[0] = nullptr;
+    u32 vector_fix_size = 1000000;
+    step_nodes.Resize(vector_fix_size);
+    // for(u32 i = 0; i < vector_fix_size; i++){
+    //   // Printf("  TSAN! i is %d \n", i);
+    //   step_nodes[i] = nullptr;
+    // }
   }
 
   step_nodes[index] = step;
 }
 
+
+/**
+ * @brief  Get the current step node, and return its corresponding_step_index
+ * @note   node->corresponding_step_index and node->index are different
+ * @param  thr: current ThreadState*
+ * @retval the corresponding_step_index of current step node
+ */
 u32 get_current_step_id(ThreadState* thr){
   tree_node* current_task_node = thr->current_task_node;
 
@@ -43,16 +107,17 @@ u32 get_current_step_id(ThreadState* thr){
   return current_task_node->current_finish_node->children_list_tail->corresponding_step_index;
 }
 
+
 /**
  * @brief  check if node1 precedes node2 in dpst
  * @param  node1: previous step node
  * @param  node2: current step node
  * @retval true if node1 precdes node2 by tree edges 
  */
-bool precede_dpst(tree_node* node1, tree_node* node2){
-  return true;
-  
-  if(node1 == nullptr){
+bool precede_dpst_new(tree_node* node1, tree_node* node2){
+  // return true;
+
+  if(node1 == nullptr || node2 == nullptr){
     return true;
   }
 
@@ -338,7 +403,7 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   return false;
 }
 
-#  define LOAD_CURRENT_SHADOW(cur, shadow_mem) UNUSED int access = 0, shadow = 0
+// #  define LOAD_CURRENT_SHADOW(cur, shadow_mem) UNUSED int access = 0, shadow = 0
 
 #else /* !TSAN_VECTORIZE */
 
@@ -488,9 +553,6 @@ SHARED:
   return true;
 }
 
-#  define LOAD_CURRENT_SHADOW(cur, shadow_mem)                         \
-    const m128 access = _mm_set1_epi32(static_cast<u32>((cur).raw())); \
-    const m128 shadow = _mm_load_si128(reinterpret_cast<m128*>(shadow_mem))
 #endif
 
 char* DumpShadow(char* buf, RawShadow raw) {
@@ -525,20 +587,33 @@ NOINLINE void TraceRestartMemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 }
 
 
+#  define LOAD_CURRENT_SHADOW(cur, shadow_mem)                         \
+    const m128 access = _mm_set1_epi32(static_cast<u32>((cur).raw())); \
+    const m128 shadow = _mm_load_si128(reinterpret_cast<m128*>(shadow_mem))
+    
 ALWAYS_INLINE
 bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 m128 shadow, m128 access, AccessType typ) {
   
-  u32 current_step_node = cur.step_node_id();
-  u32 current_step_node_by_binary = (((u32) cur.raw())>> 8) & 0x3FFFFF;
-  DCHECK_EQ(current_step_node, current_step_node_by_binary);
+  // For DPST purpose, we assume shadow_mem[0] stores the last writer
+  // shadow_mem[1] stores the leftmost reader, shadow_mem[2] stores the rightmost reader
 
-  u32 previous_0 = _mm_extract_epi32(shadow, 0);
-    previous_0 = (previous_0 >> 8) & 0x3FFFFF;
-  u32 previous_1 = _mm_extract_epi32(shadow, 1);
-    previous_1 = (previous_1 >> 8) & 0x3FFFFF;
-  u32 previous_2 = _mm_extract_epi32(shadow, 2);
-    previous_2 = (previous_2 >> 8) & 0x3FFFFF;
+  if(step_nodes.Size() == 0){
+    return false;
+  }
+
+  u32 current_step_node = cur.step_node_id();
+  // u32 current_step_node_by_binary = (((u32) cur.raw())>> 8) & 0x3FFFFF;
+  // DCHECK_EQ(current_step_node, current_step_node_by_binary);
+
+  Shadow previous_0_shadow = static_cast<Shadow>(LoadShadow(&shadow_mem[0]));
+  u32  previous_0 = previous_0_shadow.step_node_id();
+
+  Shadow previous_1_shadow = static_cast<Shadow>(LoadShadow(&shadow_mem[1]));
+  u32  previous_1 = previous_1_shadow.step_node_id();
+
+  Shadow previous_2_shadow = static_cast<Shadow>(LoadShadow(&shadow_mem[2]));
+  u32  previous_2 = previous_2_shadow.step_node_id();
 
   // Note: empty/zero slots don't intersect with any access.
   const m128 zero = _mm_setzero_si128();
@@ -560,6 +635,7 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   }
   
   STORED : {
+    
     if (typ & kAccessCheckOnly){
       return false;
     }
@@ -613,19 +689,27 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   SHARED : {
     if(typ == kAccessWrite){
       // write, check race with writer and readers
-      if( !precede_dpst(step_nodes[previous_0], step_nodes[current_step_node]) || 
-          !precede_dpst(step_nodes[previous_1], step_nodes[current_step_node]) || 
-          !precede_dpst(step_nodes[previous_2], step_nodes[current_step_node]))
+      // Printf("current_step_node is %d, step_nodes size is %d \n",current_step_node,step_nodes.Size());
+      tree_node* current_node = step_nodes[current_step_node];
+
+      // Printf("%d %d %d \n", previous_0, previous_1, previous_2);
+      tree_node* previous_node_0 = step_nodes[previous_0];
+      tree_node* previous_node_1 = step_nodes[previous_1];
+      tree_node* previous_node_2 = step_nodes[previous_2];
+
+      if( !precede_dpst_new(previous_node_0, current_node) || 
+          !precede_dpst_new(previous_node_1, current_node) || 
+          !precede_dpst_new(previous_node_2, current_node))
       {
-        Printf("race found \n");
-        return true;
+        Printf(" TSAN! race found in this write \n");
+        // return true;
       }
     }
     else{
       // read, only check race with the writer
-      if(!precede_dpst(step_nodes[previous_0], step_nodes[current_step_node])){
-        Printf("race found \n");
-        return true;
+      if(!precede_dpst_new(step_nodes[previous_0], step_nodes[current_step_node])){
+        Printf(" TSAN! race found in this read \n");
+        // return true;
       }
     }
 
@@ -654,29 +738,28 @@ ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 
     LOAD_CURRENT_SHADOW(cur, shadow_mem);
 
-    u32 current_step_node_id = cur.step_node_id();
-    u32 current_step_node_by_binary = (((u32) cur.raw())>> 8) & 0x3FFFFF;
-    DCHECK_EQ(current_step_node_id, current_step_node_by_binary);
+    // u32 current_step_node_id = cur.step_node_id();
 
-    u32 previous_0 = _mm_extract_epi32(shadow, 0);
-      previous_0 = (previous_0 >> 8) & 0x3FFFFF;
-    u32 previous_1 = _mm_extract_epi32(shadow, 1);
-      previous_1 = (previous_1 >> 8) & 0x3FFFFF;
-    u32 previous_2 = _mm_extract_epi32(shadow, 2);
-      previous_2 = (previous_2 >> 8) & 0x3FFFFF;
-    u32 previous_3 = _mm_extract_epi32(shadow, 3);
-      previous_3 = (previous_3 >> 8) & 0x3FFFFF;
+    // u32 previous_0 = _mm_extract_epi32(shadow, 0);
+    //   previous_0 = (previous_0 >> 8) & 0x3FFFFF;
+    // u32 previous_1 = _mm_extract_epi32(shadow, 1);
+    //   previous_1 = (previous_1 >> 8) & 0x3FFFFF;
+    // u32 previous_2 = _mm_extract_epi32(shadow, 2);
+    //   previous_2 = (previous_2 >> 8) & 0x3FFFFF;
+    // u32 previous_3 = _mm_extract_epi32(shadow, 3);
+    //   previous_3 = (previous_3 >> 8) & 0x3FFFFF;
 
     // Printf("current step id %d, previous access step id %d %d %d %d \n", current_step_node_id, previous_0, previous_1, previous_2, previous_3);
 
-    // if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
-    //   return;
+    if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
+      return;
 
-    // if (UNLIKELY(fast_state.GetIgnoreBit()))
-    //   return;
+    if (UNLIKELY(fast_state.GetIgnoreBit()))
+      return;
  
-    // if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
-    //   return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
+    // TODO: decide if we want to use the following if statement
+    if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
+      return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
 
     CheckRaces(thr, shadow_mem, cur, shadow, access, typ);
   }
@@ -874,6 +957,9 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   TraceMemoryAccessRange(thr, pc, addr, size, typ);
   RawShadow* shadow_mem = MemToShadow(addr);
   Shadow cur(thr->fast_state, get_current_step_id(thr), 0, kShadowCell, typ);
+
+  // Printf("TSAN! MemoryRangeFreed, addr %p, size %u, pc %p \n", addr, size, pc);
+
 #if TSAN_VECTORIZE
   const m128 access = _mm_set1_epi32(static_cast<u32>(cur.raw()));
   const m128 freed = _mm_setr_epi32(
