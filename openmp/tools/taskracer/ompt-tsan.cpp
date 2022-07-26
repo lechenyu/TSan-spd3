@@ -56,6 +56,7 @@ void __attribute__((weak))  DPSTinfo();
 
 void __attribute__((weak))  putNodeInCurThread(tree_node* node);
 
+void __attribute__((weak))  set_ompt_ready(bool b);
 } // extern "C"
 
 
@@ -83,7 +84,6 @@ ompt_set_callback_t ompt_set_callback;
 
 
 static std::atomic<int> task_id_counter(1);
-
 
 static void ompt_ta_parallel_begin
 (
@@ -185,6 +185,8 @@ static void ompt_ta_implicit_task(
       main_ti->node_in_dpst->current_finish_node = main_finish_placeholder->node_in_dpst;
 
       task_data->ptr = (void*) main_ti;
+
+      set_ompt_ready(true);
     }
   }
   else{
@@ -408,6 +410,7 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
 }
 
 static void ompt_tsan_finalize(ompt_data_t *tool_data) {
+  set_ompt_ready(false);
   DPSTinfo();
 }
 

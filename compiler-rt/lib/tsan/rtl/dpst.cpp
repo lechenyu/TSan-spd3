@@ -10,8 +10,14 @@ namespace __tsan{
 
 extern "C" {
 
+dpst::dpst(){
+    this->root = nullptr;
+    this->height = 0;
+    this->current_step_node = nullptr;
+}
+
 // dpst data structure
-struct dpst DPST;
+struct dpst DPST = dpst();
 
 char node_char[6] = {'R','F','A','f','S','W'};
 
@@ -140,10 +146,11 @@ tree_node* insert_leaf(tree_node *task_node){
     }
 
     u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
+    atomic_store(atomic_step_index,step_index+1,memory_order_consume);
+
     new_step->corresponding_step_index = step_index;
-    add_step_to_vector(step_index, new_step);
-    step_index++;
-    atomic_store(atomic_step_index,step_index,memory_order_consume);
+    step_nodes[step_index] = new_step;
+    
 
     return new_step;
 }
@@ -209,6 +216,12 @@ void DPSTinfo(){
     Printf("\n");
     Printf("DPST height is %d, number of nodes is %d, number of step nodes is %d \n", DPST.height, 
         atomic_load(atomic_node_index, memory_order_acquire), atomic_load(atomic_step_index, memory_order_acquire));
+}
+
+
+INTERFACE_ATTRIBUTE
+void set_ompt_ready(bool b){
+    ompt_ready = b;
 }
 
 } // extern C

@@ -24,11 +24,25 @@ template<typename T>
 class Vector {
  public:
   Vector() : begin_(), end_(), last_() {}
+  Vector(u32 size){
+    Vector();
+    this->Resize(size);
+    Printf("  TSAN! vector constructor end \n");
+  }
 
   ~Vector() {
-    if (begin_)
+    bool b = false;
+    if(this->Size() > 10000){
+      Printf("  TSAN! tree_node* vector destructor begins \n");
+      b = true;
+    }
+    if (begin_ && !b)
       InternalFree(begin_);
-    Printf("TSAN! destructor end \n");
+
+    if(b){
+      Printf("  TSAN! tree_node* vector destructor end \n");
+    }
+    
   }
 
   void Reset() {
@@ -89,7 +103,7 @@ class Vector {
     }
   }
 
- private:
+//  private:
   T *begin_;
   T *end_;
   T *last_;

@@ -34,6 +34,7 @@ typedef struct dpst{
     struct tree_node *root;
     struct tree_node *current_step_node;
     int height;
+    dpst();
 } dpst;
 
 extern struct dpst DPST;

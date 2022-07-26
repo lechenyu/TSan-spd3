@@ -58,7 +58,6 @@
 
 namespace __tsan {
 
-void add_step_to_vector(u32 index, tree_node* step);
 bool a_to_the_left_of_b(tree_node* a, tree_node* b);
 bool precede_dpst_new(tree_node* node1, tree_node* node2);
 
@@ -352,6 +351,7 @@ struct Context {
 
 extern Context *ctx;  // The one and the only global runtime context.
 extern Vector<tree_node*> step_nodes;
+extern bool ompt_ready;
 
 ALWAYS_INLINE Flags *flags() {
   return &ctx->flags;

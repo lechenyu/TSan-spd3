@@ -35,3 +35,4 @@ insert_leaf
 printDPST
 putNodeInCurThread
 DPSTinfo
+set_ompt_ready
