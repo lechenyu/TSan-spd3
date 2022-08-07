@@ -47,19 +47,13 @@
 #include "tsan_sync.h"
 #include "tsan_trace.h"
 #include "tsan_vector_clock.h"
-
-#ifndef DATA_STRUCTURE_H
 #include "data_structure.h"
-#endif
 
 #if SANITIZER_WORDSIZE != 64
 # error "ThreadSanitizer is supported only on 64-bit platforms"
 #endif
 
 namespace __tsan {
-
-bool a_to_the_left_of_b(tree_node* a, tree_node* b);
-bool precede_dpst_new(tree_node* node1, tree_node* node2);
 
 #if !SANITIZER_GO
 struct MapUnmapCallback;
@@ -163,7 +157,7 @@ struct TidSlot {
 
 // This struct is stored in TLS.
 struct ThreadState {
-  tree_node* current_task_node;
+  TreeNode *current_task_node;
 
   FastState fast_state;
   int ignore_sync;
@@ -350,7 +344,6 @@ struct Context {
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
-extern Vector<tree_node*> step_nodes;
 extern bool ompt_ready;
 
 ALWAYS_INLINE Flags *flags() {

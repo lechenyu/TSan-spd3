@@ -3,58 +3,58 @@
 #include "omp-tools.h"
 #include "dlfcn.h"
 
-#ifndef DATA_STRUCTURE_H
-enum node_type{
-    ROOT,
-    FINISH,
-    ASYNC,
-    FUTURE,
-    STEP,
-    TASKWAIT
+enum NodeType{
+  ROOT,
+  FINISH,
+  ASYNC,
+  FUTURE,
+  STEP,
+  TASKWAIT
 };
 
-typedef struct tree_node{
-    int index;
-    int corresponding_task_id;
-    int corresponding_step_index;
-    enum node_type this_node_type;
-    int depth;
-    int number_of_child;
-    int is_parent_nth_child;
-    int preceeding_taskwait;
-    struct tree_node *parent;
-    struct tree_node *children_list_head;
-    struct tree_node *children_list_tail;
-    struct tree_node *next_sibling;
-    struct tree_node *current_finish_node;
-    tree_node();
-} tree_node;
+class TreeNode {
+ public:
+  int index;
+  int corresponding_task_id;
+  int corresponding_step_index;
+  NodeType this_node_type;
+  int depth;
+  int number_of_child;
+  int is_parent_nth_child;
+  int preceeding_taskwait;
+  TreeNode *parent;
+  TreeNode *children_list_head;
+  TreeNode *children_list_tail;
+  TreeNode *next_sibling;
+  TreeNode *current_finish_node;
+  TreeNode() = default;
+};
 
 
 typedef struct finish_t{
-    tree_node* node_in_dpst;
-    finish_t* parent;
+  TreeNode* node_in_dpst;
+  finish_t* parent;
 } finish_t;
 
 typedef struct task_t{
   int id;
   int parent_id;
-  tree_node* node_in_dpst;
+  TreeNode* node_in_dpst;
   finish_t* belong_to_finish;
   finish_t* current_finish;
 } task_t;
-#endif
+
 
 extern "C" {
 void __attribute__((weak)) __tsan_print();
 
-tree_node* __attribute__((weak))  insert_tree_node(enum node_type nodeType, tree_node *parent);
+TreeNode* __attribute__((weak))  insert_tree_node(NodeType nodeType, TreeNode *parent);
 
-tree_node* __attribute__((weak))  insert_leaf(tree_node *task_node);
+TreeNode* __attribute__((weak))  insert_leaf(TreeNode *task_node);
 
 void __attribute__((weak))  DPSTinfo();
 
-void __attribute__((weak))  putNodeInCurThread(tree_node* node);
+void __attribute__((weak))  putNodeInCurThread(TreeNode* node);
 
 void __attribute__((weak))  set_ompt_ready(bool b);
 } // extern "C"
@@ -98,10 +98,10 @@ static void ompt_ta_parallel_begin
   assert(encountering_task_data->ptr != nullptr);
   // insert a FINISH node because of the implicit barrier
   task_t* current_task = (task_t*) encountering_task_data->ptr;
-  tree_node* current_task_node = current_task->node_in_dpst;
+  TreeNode* current_task_node = current_task->node_in_dpst;
 
   // 1. Update DPST
-  tree_node* new_finish_node;
+  TreeNode* new_finish_node;
   if(current_task->current_finish == nullptr){
     new_finish_node = insert_tree_node(FINISH,current_task_node);
   }
@@ -169,7 +169,7 @@ static void ompt_ta_implicit_task(
       printf("OMPT! initial task begins, should only appear once !! \n");
 
       // DPST operation
-      tree_node* root = insert_tree_node(ROOT,nullptr);
+      TreeNode* root = insert_tree_node(ROOT,nullptr);
       insert_leaf(root);
 
       task_t* main_ti = (task_t*) malloc(sizeof(task_t));
@@ -195,11 +195,11 @@ static void ompt_ta_implicit_task(
 
       // A. Get encountering_task information
       task_t* current_task = (task_t*) parallel_data->ptr;
-      tree_node* current_task_node = current_task->node_in_dpst;
+      TreeNode* current_task_node = current_task->node_in_dpst;
 
       // B. DPST operation
-        tree_node* new_task_node;
-        tree_node* parent_node;
+        TreeNode* new_task_node;
+        TreeNode* parent_node;
 
         if(current_task->current_finish != nullptr){
           // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
@@ -251,10 +251,10 @@ static void ompt_ta_sync_region(
     assert(task_data->ptr != nullptr);
 
     task_t* current_task = (task_t*) task_data->ptr;
-    tree_node* current_task_node = current_task->node_in_dpst;
+    TreeNode* current_task_node = current_task->node_in_dpst;
 
     // 1. Update DPST
-    tree_node* new_finish_node;
+    TreeNode* new_finish_node;
     if(current_task->current_finish == nullptr){
       new_finish_node = insert_tree_node(FINISH,current_task_node);
     }
@@ -302,7 +302,7 @@ static void ompt_ta_sync_region(
     task_t* current_task = (task_t*) task_data->ptr;
 
     // insert a single node (type STEP), mark this as a taskwait step
-    tree_node* new_taskwait_node;
+    TreeNode* new_taskwait_node;
     if(current_task->current_finish == nullptr){
       new_taskwait_node = insert_tree_node(TASKWAIT, current_task->node_in_dpst);
       new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
@@ -328,11 +328,11 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
 
   // A. Get encountering_task information
     task_t* current_task = (task_t*) encountering_task_data->ptr;
-    tree_node* current_task_node = current_task->node_in_dpst;
+    TreeNode* current_task_node = current_task->node_in_dpst;
 
   // B. DPST operation
-    tree_node* new_task_node;
-    tree_node* parent_node;
+    TreeNode* new_task_node;
+    TreeNode* parent_node;
 
     if(current_task->current_finish != nullptr){
       // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
@@ -378,7 +378,7 @@ static void ompt_ta_task_schedule(
   assert(next_task_data->ptr);
 
   task_t* next_task = (task_t*) next_task_data->ptr;
-  tree_node* next_task_node = next_task->node_in_dpst;
+  TreeNode* next_task_node = next_task->node_in_dpst;
   // printf("OMPT! task_schedule, put task node in current thread \n");
   putNodeInCurThread(next_task_node);
 }
@@ -386,7 +386,7 @@ static void ompt_ta_task_schedule(
 
 static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
                                 ompt_data_t *tool_data) {
-  __tsan_print();
+  // __tsan_print();
   ompt_set_callback = (ompt_set_callback_t) lookup("ompt_set_callback");
   if (ompt_set_callback == NULL) {
     std::cerr << "Could not set callback, exiting..." << std::endl;

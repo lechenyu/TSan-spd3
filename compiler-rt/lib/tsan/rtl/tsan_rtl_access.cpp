@@ -15,7 +15,7 @@
 
 namespace __tsan {
 u32 vector_fix_size = 1000000;
-Vector<tree_node*> step_nodes = Vector<tree_node*>(vector_fix_size);
+Vector<TreeNode *> step_nodes(vector_fix_size);
 bool ompt_ready = false;
 
 // For DPST purpose, we assume shadow_mem[0] stores the last writer
@@ -31,7 +31,7 @@ const u8 shadow_rightmost_read_index = 2;
  * @param  b: node b
  * @retval true if a is to the left of b; false otherwise
  */
-bool a_to_the_left_of_b(tree_node* a, tree_node* b){
+static bool a_to_the_left_of_b(TreeNode *a, TreeNode *b){
 
   if(a->parent->index == b->parent->index){
     if(a->is_parent_nth_child <= b->is_parent_nth_child){
@@ -40,8 +40,8 @@ bool a_to_the_left_of_b(tree_node* a, tree_node* b){
     return false;
   }
 
-  tree_node* a_last_node;
-  tree_node* b_last_node;
+  TreeNode *a_last_node;
+  TreeNode *b_last_node;
 
   while (a->depth != b->depth)
   {
@@ -77,8 +77,8 @@ bool a_to_the_left_of_b(tree_node* a, tree_node* b){
  * @param  thr: current ThreadState*
  * @retval the corresponding_step_index of current step node
  */
-u32 get_current_step_id(ThreadState* thr){
-  tree_node* current_task_node = thr->current_task_node;
+static u32 get_current_step_id(ThreadState* thr) {
+  TreeNode *current_task_node = thr->current_task_node;
 
   if(current_task_node == nullptr){
     return 0;
@@ -98,7 +98,7 @@ u32 get_current_step_id(ThreadState* thr){
  * @param  node2: current step node
  * @retval true if node1 precdes node2 by tree edges 
  */
-bool precede_dpst_new(tree_node* node1, tree_node* node2){
+static bool precede_dpst_new(TreeNode *node1, TreeNode *node2) {
 
   if(node1 == nullptr){
     return true;
@@ -118,8 +118,8 @@ bool precede_dpst_new(tree_node* node1, tree_node* node2){
     }
     
     // need to guarantee prev_node is to the left of current_node
-    tree_node* node1_last_node;
-    tree_node* node2_last_node;
+    TreeNode *node1_last_node;
+    TreeNode *node2_last_node;
 
     while (node1->depth != node2->depth)
     {
@@ -594,10 +594,10 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   Shadow previous_2_shadow = Shadow(LoadShadow(&shadow_mem[2]));
   u32  previous_2 = previous_2_shadow.step_node_id();
 
-  tree_node* current_node = step_nodes[current_step_node_index];
-  tree_node* last_writer = step_nodes[previous_0];
-  tree_node* left_reader = step_nodes[previous_1];
-  tree_node* right_reader = step_nodes[previous_2];
+  TreeNode *current_node = step_nodes[current_step_node_index];
+  TreeNode *last_writer = step_nodes[previous_0];
+  TreeNode *left_reader = step_nodes[previous_1];
+  TreeNode *right_reader = step_nodes[previous_2];
 
       // Note: empty/zero slots don't intersect with any access.
       const m128 zero = _mm_setzero_si128();

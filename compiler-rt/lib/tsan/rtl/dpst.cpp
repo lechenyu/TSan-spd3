@@ -1,23 +1,14 @@
 #include "sanitizer_common/sanitizer_internal_defs.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "tsan_rtl.h"
-
-#ifndef DATA_STRUCTURE_H
 #include "data_structure.h"
-#endif
 
 namespace __tsan{
 
-extern "C" {
-
-dpst::dpst(){
-    this->root = nullptr;
-    this->height = 0;
-    this->current_step_node = nullptr;
-}
+extern Vector<TreeNode *> step_nodes;
 
 // dpst data structure
-struct dpst DPST = dpst();
+static dpst DPST;
 
 char node_char[6] = {'R','F','A','f','S','W'};
 
@@ -27,12 +18,9 @@ atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_i
 static u32 step_index_base = 1;
 atomic_uint32_t *atomic_step_index = reinterpret_cast<atomic_uint32_t *>(&step_index_base);
 
-tree_node::tree_node(){
-
-}
-
+extern "C" {
 INTERFACE_ATTRIBUTE
-void putNodeInCurThread(tree_node* node){
+void putNodeInCurThread(TreeNode* node){
     // Printf("new task node index is %d \n", node->index);
     ThreadState* current_thread = cur_thread();
     current_thread->current_task_node = node;
@@ -43,11 +31,11 @@ void putNodeInCurThread(tree_node* node){
  * @note   
  * @retval The newly created tree node
  */
-tree_node* newtreeNode()
+TreeNode *newtreeNode()
 {
     // Allocate memory for new node
     // tree_node* node = new tree_node();
-    tree_node* node = (tree_node*) InternalAlloc(sizeof(tree_node));
+    TreeNode *node = (TreeNode *) InternalAlloc(sizeof(TreeNode));
     node->children_list_head = nullptr;
     node->children_list_tail = nullptr;
     node->next_sibling = nullptr;
@@ -76,8 +64,8 @@ tree_node* newtreeNode()
  * @retval the newly inserted node
  */
 INTERFACE_ATTRIBUTE
-tree_node* insert_tree_node(enum node_type nodeType, tree_node *parent){
-    tree_node *node = newtreeNode();   
+TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
+    TreeNode *node = newtreeNode();   
     node->this_node_type = nodeType;
     
     if(nodeType == ROOT){ 
@@ -121,8 +109,8 @@ tree_node* insert_tree_node(enum node_type nodeType, tree_node *parent){
  * @retval the newly inserted leaf(step) node
  */
 INTERFACE_ATTRIBUTE
-tree_node* insert_leaf(tree_node *task_node){
-    tree_node *new_step = newtreeNode();   
+TreeNode *insert_leaf(TreeNode *task_node){
+    TreeNode *new_step = newtreeNode();   
     new_step->this_node_type = STEP;
     new_step->parent = task_node;
     new_step->depth = task_node->depth + 1;
@@ -162,8 +150,8 @@ int get_dpst_height(){
 
 INTERFACE_ATTRIBUTE
 void printDPST(){
-    tree_node *node_array[100] = {nullptr};
-    tree_node *tmp_array[100] = {nullptr};
+    TreeNode *node_array[100]{};
+    TreeNode *tmp_array[100]{};
     node_array[0] = DPST.root;
     int depth = 0;
 
@@ -174,7 +162,7 @@ void printDPST(){
         int i = 0;
         while (i < 100)
         {
-            tree_node *node = node_array[i];
+            TreeNode *node = node_array[i];
             if(node == nullptr){
                 //Printf("   ");
             }
@@ -183,7 +171,7 @@ void printDPST(){
                 if(node->parent != nullptr){
                     Printf("(p:%d)    ",node->parent->index);
                 }
-                tree_node *child = node->children_list_head;
+                TreeNode *child = node->children_list_head;
                 while (child != nullptr)
                 {
                     tmp_array[tmp_index] = child;

@@ -2,42 +2,47 @@
 #define   DATA_STRUCTURE_H
 
 namespace __tsan {
-extern "C" {
-enum node_type{
-    ROOT,
-    FINISH,
-    ASYNC,
-    FUTURE,
-    STEP,
-    TASKWAIT
+enum NodeType {
+  ROOT,
+  FINISH,
+  ASYNC,
+  FUTURE,
+  STEP,
+  TASKWAIT
 };
 
-typedef struct tree_node{
-    int index;
-    int corresponding_task_id;
-    int corresponding_step_index;
-    enum node_type this_node_type;
-    int depth;
-    int number_of_child;
-    int is_parent_nth_child;
-    int preceeding_taskwait;
-    struct tree_node *parent;
-    struct tree_node *children_list_head;
-    struct tree_node *children_list_tail;
-    struct tree_node *next_sibling;
-    struct tree_node *current_finish_node;
-    tree_node();
-} tree_node;
+class TreeNode {
+ public:
+  int index;
+  int corresponding_task_id;
+  int corresponding_step_index;
+  NodeType this_node_type;
+  int depth;
+  int number_of_child;
+  int is_parent_nth_child;
+  int preceeding_taskwait;
+  TreeNode *parent;
+  TreeNode *children_list_head;
+  TreeNode *children_list_tail;
+  TreeNode *next_sibling;
+  TreeNode *current_finish_node;
+  TreeNode() = default;
+};
 
 
-typedef struct dpst{
-    struct tree_node *root;
-    struct tree_node *current_step_node;
-    int height;
-    dpst();
-} dpst;
+class dpst{
+ public:
+  TreeNode *root;
+  TreeNode *current_step_node;
+  int height;
+  dpst() {
+    this->root = nullptr;
+    this->height = 0;
+    this->current_step_node = nullptr;
+  }
+};
 
-extern struct dpst DPST;
+// extern struct dpst DPST;
 
 // typedef struct finish_t{
 //     tree_node* node_in_dpst;
@@ -52,6 +57,5 @@ extern struct dpst DPST;
 //   finish_t* current_finish;
 // } task_t;
 
-} // extern C
 } // namespace __tsan
 #endif
