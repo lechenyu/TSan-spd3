@@ -11,9 +11,8 @@ enum NodeType {
   TASKWAIT
 };
 
-class TreeNode {
- public:
-  int index;
+typedef struct TreeNode {
+  // int index;
   int corresponding_task_id;
   int corresponding_step_index;
   NodeType this_node_type;
@@ -26,21 +25,37 @@ class TreeNode {
   TreeNode *children_list_tail;
   TreeNode *next_sibling;
   TreeNode *current_finish_node;
-  TreeNode() = default;
-};
+  // TreeNode() = default;
+  // TreeNode(int task_id, int step_index, NodeType type, int depth, int nth_child,
+  //          int preceeding_taskwait, TreeNode *parent)
+  //     : corresponding_task_id(task_id),
+  //       corresponding_step_index(step_index),
+  //       this_node_type(type),
+  //       depth(depth),
+  //       number_of_child(0),
+  //       is_parent_nth_child(nth_child),
+  //       preceeding_taskwait(preceeding_taskwait),
+  //       parent(parent),
+  //       children_list_head(),
+  //       children_list_tail(),
+  //       next_sibling(),
+  //       current_finish_node() {}
+} TreeNode;
 
 
-class dpst{
+class DPST{
  public:
   TreeNode *root;
   TreeNode *current_step_node;
   int height;
-  dpst() {
+  DPST() {
     this->root = nullptr;
     this->height = 0;
     this->current_step_node = nullptr;
   }
 };
+
+constexpr u32 kNullStepId = 0xFFFFFFFF;  // step before the initial task
 
 // extern struct dpst DPST;
 

@@ -12,9 +12,9 @@ enum NodeType{
   TASKWAIT
 };
 
-class TreeNode {
+typedef struct TreeNode {
  public:
-  int index;
+  // int index;
   int corresponding_task_id;
   int corresponding_step_index;
   NodeType this_node_type;
@@ -28,7 +28,9 @@ class TreeNode {
   TreeNode *next_sibling;
   TreeNode *current_finish_node;
   TreeNode() = default;
-};
+  TreeNode(int task_id, int step_index, NodeType type, int depth, int nth_child,
+           int preceeding_taskwait, TreeNode *parent);
+} TreeNode;
 
 
 typedef struct finish_t{

@@ -12,62 +12,40 @@
 //===----------------------------------------------------------------------===//
 
 #include "tsan_rtl.h"
-
+#include "concurrency_vector.h"
 namespace __tsan {
-u32 vector_fix_size = 1000000;
-Vector<TreeNode *> step_nodes(vector_fix_size);
+constexpr u32 vector_fix_size = 1000000;
+ConcurrencyVector step_nodes(vector_fix_size);
 bool ompt_ready = false;
 
 // For DPST purpose, we assume shadow_mem[0] stores the last writer
 // shadow_mem[1] stores the leftmost reader, shadow_mem[2] stores the rightmost reader
-const u8 shadow_write_index = 0;
-const u8 shadow_leftmost_read_index = 1;
-const u8 shadow_rightmost_read_index = 2;
+constexpr u8 shadow_write_index = 0;
+constexpr u8 shadow_leftmost_read_index = 1;
+constexpr u8 shadow_rightmost_read_index = 2;
 
 /**
  * @brief check if node a is to the left of node b in dpst
  * @note 
- * @param  a: node a
- * @param  b: node b
+ * @param  a: node a != null
+ * @param  b: node b != null
  * @retval true if a is to the left of b; false otherwise
  */
 static bool a_to_the_left_of_b(TreeNode *a, TreeNode *b){
-
-  if(a->parent->index == b->parent->index){
-    if(a->is_parent_nth_child <= b->is_parent_nth_child){
-      return true;
+  if (a->depth != b->depth) {
+    TreeNode *deep_node = (a->depth > b->depth) ? a : b;
+    TreeNode *shallow_node = (a->depth > b->depth) ? b : a;
+    int diff = deep_node->depth - shallow_node->depth;
+    for (int i = 0; i < diff; i++) {
+      deep_node = deep_node->parent;
     }
-    return false;
   }
 
-  TreeNode *a_last_node;
-  TreeNode *b_last_node;
-
-  while (a->depth != b->depth)
-  {
-      a_last_node = a;
-      b_last_node = b;
-      if (a->depth > b->depth)
-      {
-          a = a->parent;
-      }
-      else{
-          b = a->parent;
-      }
+  while (a->parent != b->parent) {
+    a = a->parent;
+    b = b->parent;
   }
-
-  while(a->index != b->index){
-      a_last_node = a;
-      b_last_node = b;
-      a = a->parent;
-      b = b->parent;
-  }; // end
-
-  if(a_last_node->is_parent_nth_child <= b_last_node->is_parent_nth_child){
-    return true;
-  }
-
-  return false;
+  return a->is_parent_nth_child < b->is_parent_nth_child;
 }
 
 
@@ -81,7 +59,7 @@ static u32 get_current_step_id(ThreadState* thr) {
   TreeNode *current_task_node = thr->current_task_node;
 
   if(current_task_node == nullptr){
-    return 0;
+    return kNullStepId;
   }
 
   if(current_task_node->current_finish_node == nullptr){
@@ -94,69 +72,33 @@ static u32 get_current_step_id(ThreadState* thr) {
 
 /**
  * @brief  check if node1 precedes node2 in dpst
- * @param  node1: previous step node
- * @param  node2: current step node
+ * @param  prev: previous step node != null
+ * @param  curr: current step node != null
  * @retval true if node1 precdes node2 by tree edges 
  */
-static bool precede_dpst_new(TreeNode *node1, TreeNode *node2) {
+static bool precede_dpst_new(TreeNode *prev, TreeNode *curr) {
 
-  if(node1 == nullptr){
-    return true;
+  if (prev->depth != curr->depth) {
+    TreeNode *deep_node = (prev->depth > curr->depth) ? prev : curr;
+    TreeNode *shallow_node = (prev->depth > curr->depth) ? curr : prev;
+    int diff = deep_node->depth - shallow_node->depth;
+    for (int i = 0; i < diff; i++) {
+      deep_node = deep_node->parent;
+    }
   }
 
-  bool node1_precede_node2 = true;
-  bool node1_not_precede_node2 = false;
+  while (prev->parent != curr->parent) {
+    prev = prev->parent;
+    curr = curr->parent;
+  }
 
-    if(node1->parent->index == node2->parent->index){
-        // node1 and node2 are step nodes with same parent
-        if(node1->is_parent_nth_child <= node2->is_parent_nth_child){
-          return node1_precede_node2;
-        }
-        else{
-          return node1_not_precede_node2;
-        }
-    }
-    
-    // need to guarantee prev_node is to the left of current_node
-    TreeNode *node1_last_node;
-    TreeNode *node2_last_node;
-
-    while (node1->depth != node2->depth)
-    {
-        node1_last_node = node1;
-        node2_last_node = node2;
-        if (node1->depth > node2->depth)
-        {
-            node1 = node1->parent;
-        }
-        else{
-            node2 = node2->parent;
-        }
-    }
-
-    while(node1->index != node2->index){
-        node1_last_node = node1;
-        node2_last_node = node2;
-        node1 = node1->parent;
-        node2 = node2->parent;
-    }; // end
-
-    if(node1_last_node->is_parent_nth_child < node2_last_node->is_parent_nth_child){
-        // node1 is to the left of node 2
-        if(
-             (node1_last_node->this_node_type == ASYNC && node2_last_node->preceeding_taskwait < 0)
-          || (node1_last_node->this_node_type == ASYNC && node2_last_node->preceeding_taskwait < node1_last_node->is_parent_nth_child)
-        ){
-          return node1_not_precede_node2;
-        }
-        else{
-            return node1_precede_node2;
-        }
-    }
-
-    // node 1 is to the right of node 2
-    // return false because "node1 doesn't precede node2 by DPST"
-    return node1_not_precede_node2;
+  if ((prev->is_parent_nth_child > curr->is_parent_nth_child) ||
+      (prev->this_node_type == ASYNC &&
+       prev->is_parent_nth_child > curr->preceeding_taskwait)) {
+    return false;
+  } else {
+    return true;
+  }
 }
 
 
@@ -594,11 +536,11 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   Shadow previous_2_shadow = Shadow(LoadShadow(&shadow_mem[2]));
   u32  previous_2 = previous_2_shadow.step_node_id();
 
-  TreeNode *current_node = step_nodes[current_step_node_index];
-  TreeNode *last_writer = step_nodes[previous_0];
-  TreeNode *left_reader = step_nodes[previous_1];
-  TreeNode *right_reader = step_nodes[previous_2];
-
+  TreeNode *current_node = &step_nodes[current_step_node_index];
+  TreeNode *last_writer = &step_nodes[previous_0];
+  TreeNode *left_reader = &step_nodes[previous_1];
+  TreeNode *right_reader = &step_nodes[previous_2];
+  // Printf("current = %u, r1 = %u, r2 = %u, w = %u\n", current_step_node_index, previous_1, previous_2, previous_0);
       // Note: empty/zero slots don't intersect with any access.
       const m128 zero = _mm_setzero_si128();
       const m128 mask_access = _mm_set1_epi32(0x000000ff);
@@ -696,10 +638,14 @@ bool CheckRaces(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 
 ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
                                      uptr size, AccessType typ) {
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   RawShadow* shadow_mem = MemToShadow(addr);
   FastState fast_state = thr->fast_state;
 
-  Shadow cur(fast_state, get_current_step_id(thr), addr, size, typ);
+  Shadow cur(fast_state, curr_step_id, addr, size, typ);
   
   // uptr shadow_size, shadow_addr;
   // AccessType shadow_typ;
@@ -763,11 +709,15 @@ void RestartMemoryAccess16(ThreadState* thr, uptr pc, uptr addr,
 
 ALWAYS_INLINE USED void MemoryAccess16(ThreadState* thr, uptr pc, uptr addr,
                                        AccessType typ) {
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   const uptr size = 16;
   FastState fast_state = thr->fast_state;
   if (UNLIKELY(fast_state.GetIgnoreBit()))
     return;
-  Shadow cur(fast_state, get_current_step_id(thr), 0, 8, typ);
+  Shadow cur(fast_state, curr_step_id, 0, 8, typ);
   RawShadow* shadow_mem = MemToShadow(addr);
   bool traced = false;
   {
@@ -800,6 +750,10 @@ void RestartUnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
                                               uptr addr, uptr size,
                                               AccessType typ) {
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   DCHECK_LE(size, 8);
   FastState fast_state = thr->fast_state;
   if (UNLIKELY(fast_state.GetIgnoreBit()))
@@ -808,7 +762,7 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
   bool traced = false;
   uptr size1 = Min<uptr>(size, RoundUp(addr + 1, kShadowCell) - addr);
   {
-    Shadow cur(fast_state, get_current_step_id(thr), addr, size1, typ);
+    Shadow cur(fast_state, curr_step_id, addr, size1, typ);
     LOAD_CURRENT_SHADOW(cur, shadow_mem);
     if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
       goto SECOND;
@@ -823,7 +777,7 @@ SECOND:
   if (LIKELY(size2 == 0))
     return;
   shadow_mem += kShadowCnt;
-  Shadow cur(fast_state, get_current_step_id(thr), 0, size2, typ);
+  Shadow cur(fast_state, curr_step_id, 0, size2, typ);
   LOAD_CURRENT_SHADOW(cur, shadow_mem);
   if (LIKELY(ContainsSameAccess(shadow_mem, cur, shadow, access, typ)))
     return;
@@ -905,6 +859,10 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   // if it happens to match a real free in the thread trace,
   // but the heap block was reallocated before the current memory access,
   // so it's still good to access. It's not the case with data races.
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   DCHECK(thr->slot_locked);
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
@@ -916,7 +874,7 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
                          kAccessCheckOnly | kAccessNoRodata;
   TraceMemoryAccessRange(thr, pc, addr, size, typ);
   RawShadow* shadow_mem = MemToShadow(addr);
-  Shadow cur(thr->fast_state, get_current_step_id(thr), 0, kShadowCell, typ);
+  Shadow cur(thr->fast_state, curr_step_id, 0, kShadowCell, typ);
 
   // Printf("TSAN! MemoryRangeFreed, addr %p, size %u, pc %p \n", addr, size, pc);
 
@@ -944,10 +902,14 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
 }
 
 void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
   TraceMemoryAccessRange(thr, pc, addr, size, kAccessWrite);
-  Shadow cur(thr->fast_state, get_current_step_id(thr), 0, 8, kAccessWrite);
+  Shadow cur(thr->fast_state, curr_step_id, 0, 8, kAccessWrite);
   MemoryRangeSet(addr, size, cur.raw());
 }
 
@@ -977,6 +939,10 @@ NOINLINE void RestartMemoryAccessRange(ThreadState* thr, uptr pc, uptr addr,
 
 template <bool is_read>
 void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size) {
+  u32 curr_step_id = get_current_step_id(thr);
+  if (curr_step_id == kNullStepId) {
+    return;
+  }
   const AccessType typ =
       (is_read ? kAccessRead : kAccessWrite) | kAccessNoRodata;
   RawShadow* shadow_mem = MemToShadow(addr);
@@ -1025,20 +991,20 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size) {
     // Handle unaligned beginning, if any.
     uptr size1 = Min(size, RoundUp(addr, kShadowCell) - addr);
     size -= size1;
-    Shadow cur(fast_state, get_current_step_id(thr), addr, size1, typ);
+    Shadow cur(fast_state, curr_step_id, addr, size1, typ);
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ)))
       return;
     shadow_mem += kShadowCnt;
   }
   // Handle middle part, if any.
-  Shadow cur(fast_state, get_current_step_id(thr), 0, kShadowCell, typ);
+  Shadow cur(fast_state, curr_step_id, 0, kShadowCell, typ);
   for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt) {
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ)))
       return;
   }
   // Handle ending, if any.
   if (UNLIKELY(size)) {
-    Shadow cur(fast_state,get_current_step_id(thr),  0, size, typ);
+    Shadow cur(fast_state, curr_step_id,  0, size, typ);
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ)))
       return;
   }

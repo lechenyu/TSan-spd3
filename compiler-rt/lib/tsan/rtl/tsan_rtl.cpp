@@ -391,7 +391,7 @@ ThreadState::ThreadState(Tid tid)
     // they may be accessed before the ctor.
     // ignore_reads_and_writes()
     // ignore_interceptors()
-    : tid(tid) {
+    : tid(tid), current_task_node() {
   CHECK_EQ(reinterpret_cast<uptr>(this) % SANITIZER_CACHE_LINE_SIZE, 0);
 #if !SANITIZER_GO
   // C/C++ uses fixed size shadow stack.
@@ -407,7 +407,6 @@ ThreadState::ThreadState(Tid tid)
 #endif
   shadow_stack_pos = shadow_stack;
   shadow_stack_end = shadow_stack + kInitStackSize;
-  this->current_task_node = nullptr;
 }
 
 #if !SANITIZER_GO

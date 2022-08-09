@@ -1,22 +1,22 @@
 #include "sanitizer_common/sanitizer_internal_defs.h"
 #include "sanitizer_common/sanitizer_stacktrace.h"
 #include "tsan_rtl.h"
-#include "data_structure.h"
+#include "concurrency_vector.h"
 
 namespace __tsan{
 
-extern Vector<TreeNode *> step_nodes;
+extern ConcurrencyVector step_nodes;
 
 // dpst data structure
-static dpst DPST;
+static DPST dpst;
 
 char node_char[6] = {'R','F','A','f','S','W'};
 
-static int node_index_base = 0;
-atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_index_base);
+// static int node_index_base = 0;
+// atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_index_base);
 
-static u32 step_index_base = 1;
-atomic_uint32_t *atomic_step_index = reinterpret_cast<atomic_uint32_t *>(&step_index_base);
+// static u32 step_index_base = 1;
+// atomic_uint32_t *atomic_step_index = reinterpret_cast<atomic_uint32_t *>(&step_index_base);
 
 extern "C" {
 INTERFACE_ATTRIBUTE
@@ -46,9 +46,9 @@ TreeNode *newtreeNode()
     node->is_parent_nth_child = 0;
     node->preceeding_taskwait = -1;
 
-    u32 node_index = atomic_load(atomic_node_index,memory_order_acquire);
-    node->index = node_index;
-    atomic_store(atomic_node_index,node_index+1,memory_order_consume);
+    // u32 node_index = atomic_load(atomic_node_index,memory_order_acquire);
+    // node->index = node_index;
+    // atomic_store(atomic_node_index,node_index+1,memory_order_consume);
 
     node->corresponding_step_index = -2;
 
@@ -71,7 +71,7 @@ TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
     if(nodeType == ROOT){ 
         node->depth = 0;
         node->parent = nullptr;
-        DPST.root = node;
+        dpst.root = node;
     }
     else{
         // each task corresponds to an async or a future tree node
@@ -95,8 +95,8 @@ TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
         }   
     }
 
-    if(node->depth > DPST.height){
-        DPST.height = node->depth;
+    if(node->depth > dpst.height){
+        dpst.height = node->depth;
     }
     return node;
 }
@@ -110,13 +110,9 @@ TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
  */
 INTERFACE_ATTRIBUTE
 TreeNode *insert_leaf(TreeNode *task_node){
-    TreeNode *new_step = newtreeNode();   
-    new_step->this_node_type = STEP;
-    new_step->parent = task_node;
-    new_step->depth = task_node->depth + 1;
-    new_step->is_parent_nth_child = task_node->number_of_child;
-    new_step->corresponding_task_id = task_node->corresponding_task_id;
-
+    int preceeding_taskwait = (task_node->children_list_head) ? task_node->children_list_tail->preceeding_taskwait : -1;
+    TreeNode &n = step_nodes.EmplaceBack(task_node->corresponding_task_id, STEP, task_node->depth + 1, task_node->number_of_child, preceeding_taskwait, task_node);   
+    TreeNode *new_step = &n;
     task_node->number_of_child += 1;
     
     if(task_node->children_list_head == nullptr){
@@ -125,34 +121,33 @@ TreeNode *insert_leaf(TreeNode *task_node){
     }
     else{
         task_node->children_list_tail->next_sibling = new_step;
-        new_step->preceeding_taskwait = task_node->children_list_tail->preceeding_taskwait;
         task_node->children_list_tail = new_step;
     }
 
-    if(new_step->depth > DPST.height){
-        DPST.height = new_step->depth;
+    if(new_step->depth > dpst.height){
+        dpst.height = new_step->depth;
     }
 
-    u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
-    atomic_store(atomic_step_index,step_index+1,memory_order_consume);
+    // u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
+    // atomic_store(atomic_step_index,step_index+1,memory_order_consume);
 
-    new_step->corresponding_step_index = step_index;
-    step_nodes[step_index] = new_step;
-    
+    // new_step->corresponding_step_index = step_index;
+    // step_nodes[step_index] = new_step;
+    // Printf("insert into %d\n", step_index);
 
     return new_step;
 }
 
 
 int get_dpst_height(){
-    return DPST.height;
+    return dpst.height;
 }
 
 INTERFACE_ATTRIBUTE
 void printDPST(){
     TreeNode *node_array[100]{};
     TreeNode *tmp_array[100]{};
-    node_array[0] = DPST.root;
+    node_array[0] = dpst.root;
     int depth = 0;
 
     while (node_array[0] != nullptr)
@@ -167,9 +162,9 @@ void printDPST(){
                 //Printf("   ");
             }
             else{
-                Printf("%c (i:%d) ",node_char[node->this_node_type],node->index);
+                Printf("%c (i:%p) ",node_char[node->this_node_type],node);
                 if(node->parent != nullptr){
-                    Printf("(p:%d)    ",node->parent->index);
+                    Printf("(p:%p)    ",node->parent);
                 }
                 TreeNode *child = node->children_list_head;
                 while (child != nullptr)
@@ -202,8 +197,8 @@ void DPSTinfo(){
     printDPST();
 
     Printf("\n");
-    Printf("DPST height is %d, number of nodes is %d, number of step nodes is %d \n", DPST.height, 
-        atomic_load(atomic_node_index, memory_order_acquire), atomic_load(atomic_step_index, memory_order_acquire));
+    // Printf("DPST height is %d, number of nodes is %d, number of step nodes is %d \n", dpst.height, 
+    //     atomic_load(atomic_node_index, memory_order_acquire), atomic_load(atomic_step_index, memory_order_acquire));
 }
 
 

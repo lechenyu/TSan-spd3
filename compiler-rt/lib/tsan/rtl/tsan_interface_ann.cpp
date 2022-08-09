@@ -438,6 +438,6 @@ void __tsan_mutex_post_divert(void *addr, unsigned flagz) {
 
 INTERFACE_ATTRIBUTE
 void __tsan_print() {
-  Printf("Printf in tsan by fj \n");
+  Printf("Example of tsan interface (__tsan_print) \n");
 }
 }  // extern "C"

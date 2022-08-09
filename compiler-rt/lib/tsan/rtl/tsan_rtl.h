@@ -157,8 +157,6 @@ struct TidSlot {
 
 // This struct is stored in TLS.
 struct ThreadState {
-  TreeNode *current_task_node;
-
   FastState fast_state;
   int ignore_sync;
 #if !SANITIZER_GO
@@ -234,6 +232,8 @@ struct ThreadState {
 
   const ReportDesc *current_report;
 
+  TreeNode *current_task_node;
+  
   explicit ThreadState(Tid tid);
 } ALIGNED(SANITIZER_CACHE_LINE_SIZE);
 

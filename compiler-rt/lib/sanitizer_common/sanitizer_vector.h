@@ -24,14 +24,10 @@ template<typename T>
 class Vector {
  public:
   Vector() : begin_(), end_(), last_() {}
-  Vector(uptr size){
-    Vector();
-    this->Resize(size);
-  }
 
   ~Vector() {
-    // if (begin_)
-    //   InternalFree(begin_);
+    if (begin_)
+      InternalFree(begin_);
   }
 
   void Reset() {
