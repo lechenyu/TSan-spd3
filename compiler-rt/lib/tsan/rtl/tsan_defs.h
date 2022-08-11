@@ -212,6 +212,8 @@ enum {
   MutexTypeSlots,
 };
 
+const u32 kNullStepId = 0xFFFFFFFF;  // step before the initial task
+
 }  // namespace __tsan
 
 #endif  // TSAN_DEFS_H

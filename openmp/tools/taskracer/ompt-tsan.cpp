@@ -3,13 +3,14 @@
 #include "omp-tools.h"
 #include "dlfcn.h"
 
-enum NodeType{
+enum NodeType {
   ROOT,
   FINISH,
   ASYNC,
   FUTURE,
   STEP,
-  TASKWAIT
+  TASKWAIT,
+  NODE_TYPE_END
 };
 
 typedef struct TreeNode {
@@ -27,9 +28,6 @@ typedef struct TreeNode {
   TreeNode *children_list_tail;
   TreeNode *next_sibling;
   TreeNode *current_finish_node;
-  TreeNode() = default;
-  TreeNode(int task_id, int step_index, NodeType type, int depth, int nth_child,
-           int preceeding_taskwait, TreeNode *parent);
 } TreeNode;
 
 
@@ -50,15 +48,15 @@ typedef struct task_t{
 extern "C" {
 void __attribute__((weak)) __tsan_print();
 
-TreeNode* __attribute__((weak))  insert_tree_node(NodeType nodeType, TreeNode *parent);
+TreeNode* __attribute__((weak))  __tsan_insert_tree_node(NodeType nodeType, TreeNode *parent);
 
-TreeNode* __attribute__((weak))  insert_leaf(TreeNode *task_node);
+TreeNode* __attribute__((weak))  __tsan_insert_leaf(TreeNode *task_node);
 
-void __attribute__((weak))  DPSTinfo();
+void __attribute__((weak))  __tsan_print_dpst_info(bool print_dpst);
 
-void __attribute__((weak))  putNodeInCurThread(TreeNode* node);
+void __attribute__((weak))  __tsan_set_task_in_tls(TreeNode* node);
 
-void __attribute__((weak))  set_ompt_ready(bool b);
+void __attribute__((weak))  __tsan_set_ompt_ready(bool b);
 } // extern "C"
 
 
@@ -105,13 +103,13 @@ static void ompt_ta_parallel_begin
   // 1. Update DPST
   TreeNode* new_finish_node;
   if(current_task->current_finish == nullptr){
-    new_finish_node = insert_tree_node(FINISH,current_task_node);
+    new_finish_node = __tsan_insert_tree_node(FINISH,current_task_node);
   }
   else{
-    new_finish_node = insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
+    new_finish_node = __tsan_insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
   }
-  insert_leaf(new_finish_node);
-  insert_leaf(current_task_node);
+  __tsan_insert_leaf(new_finish_node);
+  __tsan_insert_leaf(current_task_node);
 
   // 2. Set current task's current_finish to this finish
   finish_t* finish = (finish_t*) malloc(sizeof(finish_t));
@@ -171,8 +169,8 @@ static void ompt_ta_implicit_task(
       printf("OMPT! initial task begins, should only appear once !! \n");
 
       // DPST operation
-      TreeNode* root = insert_tree_node(ROOT,nullptr);
-      insert_leaf(root);
+      TreeNode* root = __tsan_insert_tree_node(ROOT,nullptr);
+      __tsan_insert_leaf(root);
 
       task_t* main_ti = (task_t*) malloc(sizeof(task_t));
       main_ti->belong_to_finish = nullptr;
@@ -188,7 +186,7 @@ static void ompt_ta_implicit_task(
 
       task_data->ptr = (void*) main_ti;
 
-      set_ompt_ready(true);
+      __tsan_set_ompt_ready(true);
     }
   }
   else{
@@ -212,10 +210,10 @@ static void ompt_ta_implicit_task(
           parent_node = current_task_node;
         }
 
-        new_task_node = insert_tree_node(ASYNC, parent_node);
+        new_task_node = __tsan_insert_tree_node(ASYNC, parent_node);
 
-        insert_leaf(new_task_node->parent);
-        insert_leaf(new_task_node);
+        __tsan_insert_leaf(new_task_node->parent);
+        __tsan_insert_leaf(new_task_node);
         new_task_node->corresponding_task_id = task_id_counter;
 
 
@@ -258,13 +256,13 @@ static void ompt_ta_sync_region(
     // 1. Update DPST
     TreeNode* new_finish_node;
     if(current_task->current_finish == nullptr){
-      new_finish_node = insert_tree_node(FINISH,current_task_node);
+      new_finish_node = __tsan_insert_tree_node(FINISH,current_task_node);
     }
     else{
-      new_finish_node = insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
+      new_finish_node = __tsan_insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
     }
-    insert_leaf(new_finish_node);
-    insert_leaf(current_task_node);
+    __tsan_insert_leaf(new_finish_node);
+    __tsan_insert_leaf(current_task_node);
 
     // 2. Set current task's current_finish to this finish
     finish_t* new_finish = (finish_t*) malloc(sizeof(finish_t));
@@ -306,14 +304,14 @@ static void ompt_ta_sync_region(
     // insert a single node (type STEP), mark this as a taskwait step
     TreeNode* new_taskwait_node;
     if(current_task->current_finish == nullptr){
-      new_taskwait_node = insert_tree_node(TASKWAIT, current_task->node_in_dpst);
+      new_taskwait_node = __tsan_insert_tree_node(TASKWAIT, current_task->node_in_dpst);
       new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
-      insert_leaf(current_task->node_in_dpst);
+      __tsan_insert_leaf(current_task->node_in_dpst);
     }
     else{
-      new_taskwait_node = insert_tree_node(TASKWAIT, current_task->current_finish->node_in_dpst);
+      new_taskwait_node = __tsan_insert_tree_node(TASKWAIT, current_task->current_finish->node_in_dpst);
       new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
-      insert_leaf(current_task->current_finish->node_in_dpst);
+      __tsan_insert_leaf(current_task->current_finish->node_in_dpst);
     }
 
   }
@@ -345,10 +343,10 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
       parent_node = current_task_node;
     }
 
-    new_task_node = insert_tree_node(ASYNC, parent_node);
+    new_task_node = __tsan_insert_tree_node(ASYNC, parent_node);
 
-    insert_leaf(new_task_node->parent);
-    insert_leaf(new_task_node);
+    __tsan_insert_leaf(new_task_node->parent);
+    __tsan_insert_leaf(new_task_node);
     new_task_node->corresponding_task_id = task_id_counter;
 
   // C. Update task data
@@ -382,7 +380,7 @@ static void ompt_ta_task_schedule(
   task_t* next_task = (task_t*) next_task_data->ptr;
   TreeNode* next_task_node = next_task->node_in_dpst;
   // printf("OMPT! task_schedule, put task node in current thread \n");
-  putNodeInCurThread(next_task_node);
+  __tsan_set_task_in_tls(next_task_node);
 }
 
 
@@ -412,8 +410,8 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
 }
 
 static void ompt_tsan_finalize(ompt_data_t *tool_data) {
-  set_ompt_ready(false);
-  DPSTinfo();
+  __tsan_set_ompt_ready(false);
+  // __tsan_print_dpst_info(true);
 }
 
 static bool scan_tsan_runtime() {

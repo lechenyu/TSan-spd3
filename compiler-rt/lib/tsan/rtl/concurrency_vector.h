@@ -9,7 +9,7 @@
 namespace __tsan {
 class ConcurrencyVector {
  public:
-  ConcurrencyVector(int capacity) : begin_(), cap_(capacity), size_() {
+  ConcurrencyVector(int capacity) : begin_(), cap_(capacity), size_({1}) {
     if (cap_) {
       begin_ = (TreeNode *)InternalAlloc(cap_ * sizeof(TreeNode));
       internal_memset(begin_, 0, cap_ * sizeof(TreeNode));
@@ -46,7 +46,7 @@ class ConcurrencyVector {
  private:
   TreeNode *begin_;
   int cap_;
-  atomic_sint32_t size_;
+  atomic_sint32_t size_; // step_id start from 1
 
 };
 

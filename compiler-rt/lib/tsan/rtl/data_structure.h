@@ -8,7 +8,8 @@ enum NodeType {
   ASYNC,
   FUTURE,
   STEP,
-  TASKWAIT
+  TASKWAIT,
+  NODE_TYPE_END
 };
 
 typedef struct TreeNode {
@@ -47,15 +48,11 @@ class DPST{
  public:
   TreeNode *root;
   TreeNode *current_step_node;
-  int height;
   DPST() {
     this->root = nullptr;
-    this->height = 0;
     this->current_step_node = nullptr;
   }
 };
-
-constexpr u32 kNullStepId = 0xFFFFFFFF;  // step before the initial task
 
 // extern struct dpst DPST;
 

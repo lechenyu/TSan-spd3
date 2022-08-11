@@ -73,30 +73,26 @@ class Shadow {
   //   DCHECK_EQ(sid(), sid0);
   //   DCHECK_EQ(epoch(), epoch0);
   // }
+  // Shadow(u32 step_id) {
+  //   newpart_.stepid = step_id;
+  // }
 
-  Shadow(FastState state, u32 step_id, u32 addr, u32 size, AccessType typ)
-  {
-    raw_ = state.raw_;
-    DCHECK_GT(size, 0);
-    DCHECK_LE(size, 8);
-
-    raw_ |= (!!(typ & kAccessAtomic) << kIsAtomicShift) |
-            (!!(typ & kAccessRead) << kIsReadShift) |
-            (((((1u << size) - 1) << (addr & 0x7)) & 0xff) << kAccessShift);
-
-    newpart_.stepid = step_id;
-    newpart_.is_read_ = !!(typ & kAccessRead);
-    DCHECK_EQ(newpart_.is_read_, !!(typ & kAccessRead));
+  Shadow(bool is_atomic, bool is_free, u32 step_id) {
+    u32 raw = static_cast<u32>(is_atomic) << kIsAtomicShift |
+              static_cast<u32>(is_free) << kIsFreeShift | step_id;
+    this->raw_ = raw;
   }
 
   explicit Shadow(RawShadow x = Shadow::kEmpty) { raw_ = static_cast<u32>(x); }
 
-  u32 step_node_id() const {return newpart_.stepid; };
+  u32 step_id() const {return newpart_.step_id_; };
+  bool is_freed() const {return newpart_.is_free_; };
+  bool is_atomic() const {return newpart_.is_atomic_; };
   
   RawShadow raw() const { return static_cast<RawShadow>(raw_); }
-  Sid sid() const { return part_.sid_; }
-  Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
-  u8 access() const { return part_.access_; }
+  // Sid sid() const { return part_.sid_; }
+  // Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
+  // u8 access() const { return part_.access_; }
 
   void GetAccess(uptr *addr, uptr *size, AccessType *typ) const {
     DCHECK(part_.access_ != 0 || raw_ == static_cast<u32>(Shadow::kRodata));
@@ -146,19 +142,24 @@ class Shadow {
 
   // The FreedMarker must not pass "the same access check" so that we don't
   // return from the race detection algorithm early.
-  static RawShadow FreedMarker() {
-    FastState fs;
-    fs.SetSid(kFreeSid);
-    fs.SetEpoch(kEpochLast);
-    Shadow s(fs, 0, 0, 8, kAccessWrite);
-    return s.raw();
-  }
+  // static RawShadow FreedMarker() {
+  //   FastState fs;
+  //   fs.SetSid(kFreeSid);
+  //   fs.SetEpoch(kEpochLast);
+  //   Shadow s(fs, 0, 0, 8, kAccessWrite);
+  //   return s.raw();
+  // }
 
-  static RawShadow FreedInfo(Sid sid, Epoch epoch) {
-    Shadow s;
-    s.part_.sid_ = sid;
-    s.part_.epoch_ = static_cast<u16>(epoch);
-    s.part_.access_ = kFreeAccess;
+  // static RawShadow FreedInfo(Sid sid, Epoch epoch) {
+  //   Shadow s;
+  //   s.part_.sid_ = sid;
+  //   s.part_.epoch_ = static_cast<u16>(epoch);
+  //   s.part_.access_ = kFreeAccess;
+  //   return s.raw();
+  // }
+
+  static RawShadow FreedMarker(u32 step_id) {
+    Shadow s(false, true, step_id);
     return s.raw();
   }
 
@@ -173,9 +174,11 @@ class Shadow {
 
   struct NewParts
   {
-    u32 access_ : 8;
-    u32 stepid : 22;
-    u32 is_read_ : 1;
+    //u32 access_ : 8;
+    //u32 step_id_ : 22;
+    //u32 is_read_ : 1;
+    u32 step_id_ : 30;
+    u32 is_free_ : 1;
     u32 is_atomic_ : 1;
   };
   
@@ -191,6 +194,8 @@ class Shadow {
   static constexpr uptr kAccessShift = 0;
   static constexpr uptr kIsReadShift = 30;
   static constexpr uptr kIsAtomicShift = 31;
+
+  static constexpr uptr kIsFreeShift = 30;
 #else
   static constexpr uptr kAccessShift = 24;
   static constexpr uptr kIsReadShift = 1;
@@ -200,7 +205,7 @@ class Shadow {
  public:
   // .rodata shadow marker, see MapRodata and ContainsSameAccessFast.
   static constexpr RawShadow kRodata =
-      static_cast<RawShadow>(1 << kIsReadShift);
+      static_cast<RawShadow>(1 << kIsFreeShift);
 };
 
 static_assert(sizeof(Shadow) == kShadowSize, "bad Shadow size");

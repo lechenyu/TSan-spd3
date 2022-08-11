@@ -1,5 +1,6 @@
 #include "sanitizer_common/sanitizer_internal_defs.h"
-#include "sanitizer_common/sanitizer_stacktrace.h"
+#include "sanitizer_common/sanitizer_allocator_internal.h"
+#include "sanitizer_common/sanitizer_vector.h"
 #include "tsan_rtl.h"
 #include "concurrency_vector.h"
 
@@ -10,7 +11,7 @@ extern ConcurrencyVector step_nodes;
 // dpst data structure
 static DPST dpst;
 
-char node_char[6] = {'R','F','A','f','S','W'};
+static const char* node_desc[] = {"Root","Finish", "Async", "Future", "Step", "TaskWait"};
 
 // static int node_index_base = 0;
 // atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_index_base);
@@ -20,7 +21,7 @@ char node_char[6] = {'R','F','A','f','S','W'};
 
 extern "C" {
 INTERFACE_ATTRIBUTE
-void putNodeInCurThread(TreeNode* node){
+void __tsan_set_task_in_tls(TreeNode* node){
     // Printf("new task node index is %d \n", node->index);
     ThreadState* current_thread = cur_thread();
     current_thread->current_task_node = node;
@@ -31,7 +32,7 @@ void putNodeInCurThread(TreeNode* node){
  * @note   
  * @retval The newly created tree node
  */
-TreeNode *newtreeNode()
+static TreeNode *newtreeNode()
 {
     // Allocate memory for new node
     // tree_node* node = new tree_node();
@@ -50,7 +51,7 @@ TreeNode *newtreeNode()
     // node->index = node_index;
     // atomic_store(atomic_node_index,node_index+1,memory_order_consume);
 
-    node->corresponding_step_index = -2;
+    node->corresponding_step_index = 0;
 
     return node;
 }
@@ -64,7 +65,7 @@ TreeNode *newtreeNode()
  * @retval the newly inserted node
  */
 INTERFACE_ATTRIBUTE
-TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
+TreeNode *__tsan_insert_tree_node(NodeType nodeType, TreeNode *parent){
     TreeNode *node = newtreeNode();   
     node->this_node_type = nodeType;
     
@@ -95,9 +96,6 @@ TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
         }   
     }
 
-    if(node->depth > dpst.height){
-        dpst.height = node->depth;
-    }
     return node;
 }
 
@@ -109,7 +107,7 @@ TreeNode *insert_tree_node(NodeType nodeType, TreeNode *parent){
  * @retval the newly inserted leaf(step) node
  */
 INTERFACE_ATTRIBUTE
-TreeNode *insert_leaf(TreeNode *task_node){
+TreeNode *__tsan_insert_leaf(TreeNode *task_node){
     int preceeding_taskwait = (task_node->children_list_head) ? task_node->children_list_tail->preceeding_taskwait : -1;
     TreeNode &n = step_nodes.EmplaceBack(task_node->corresponding_task_id, STEP, task_node->depth + 1, task_node->number_of_child, preceeding_taskwait, task_node);   
     TreeNode *new_step = &n;
@@ -124,10 +122,6 @@ TreeNode *insert_leaf(TreeNode *task_node){
         task_node->children_list_tail = new_step;
     }
 
-    if(new_step->depth > dpst.height){
-        dpst.height = new_step->depth;
-    }
-
     // u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
     // atomic_store(atomic_step_index,step_index+1,memory_order_consume);
 
@@ -138,72 +132,66 @@ TreeNode *insert_leaf(TreeNode *task_node){
     return new_step;
 }
 
-
-int get_dpst_height(){
-    return dpst.height;
+static void print_node(TreeNode *t) {
+  Printf("[%s_%lu]", node_desc[t->this_node_type],
+         t->corresponding_step_index ? t->corresponding_step_index : (uptr)t);
+  TreeNode *p = t->parent;
+  if (p) {
+    Printf("(%s_%lu[%u])", node_desc[p->this_node_type],
+           p->corresponding_step_index ? p->corresponding_step_index : (uptr)p,
+           t->is_parent_nth_child);
+  }
 }
 
-INTERFACE_ATTRIBUTE
-void printDPST(){
-    TreeNode *node_array[100]{};
-    TreeNode *tmp_array[100]{};
-    node_array[0] = dpst.root;
-    int depth = 0;
-
-    while (node_array[0] != nullptr)
-    {
-        Printf("depth %d:   ",depth);
-        int tmp_index = 0;
-        int i = 0;
-        while (i < 100)
-        {
-            TreeNode *node = node_array[i];
-            if(node == nullptr){
-                //Printf("   ");
-            }
-            else{
-                Printf("%c (i:%p) ",node_char[node->this_node_type],node);
-                if(node->parent != nullptr){
-                    Printf("(p:%p)    ",node->parent);
-                }
-                TreeNode *child = node->children_list_head;
-                while (child != nullptr)
-                {
-                    tmp_array[tmp_index] = child;
-                    tmp_index++;
-                    child = child->next_sibling;
-                }
-            }
-
-            node_array[i] = nullptr;
-            i++;
-        }
-        Printf("\n");
-
-        depth++;
-        int j = 0;
-        while(j < 100){
-            node_array[j] = tmp_array[j];
-            tmp_array[j] = nullptr;
-            j++;
-        }
+static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
+  if (!dpst.root) {
+    return;
+  }
+  Vector<TreeNode *> v1, v2;
+  Vector<TreeNode *> *curr = &v1, *next = &v2;
+  curr->PushBack(dpst.root);
+  u32 level = 0;
+  while (curr->Size()) {
+    if (print_dpst) {
+      Printf("\n Level %u: ", level);
     }
+    for (TreeNode *t : *curr) {
+      if (print_dpst) {
+        print_node(t);
+        Printf(" ");
+      }
+      max_depth = (max_depth < t->depth) ? t->depth : max_depth;
+      counts[t->this_node_type]++;
+      for (TreeNode *c = t->children_list_head; c != nullptr;
+           c = c->next_sibling) {
+        next->PushBack(c);
+      }
+    }
+    level++;
+    Swap(curr, next);
+    next->Clear();
+  }
 }
 
-
 INTERFACE_ATTRIBUTE
-void DPSTinfo(){
-    Printf("\n");
-    printDPST();
-
-    Printf("\n");
-    // Printf("DPST height is %d, number of nodes is %d, number of step nodes is %d \n", dpst.height, 
-    //     atomic_load(atomic_node_index, memory_order_acquire), atomic_load(atomic_step_index, memory_order_acquire));
+void __tsan_print_dpst_info(bool print_dpst) {
+  Printf("=============================================================\n");
+  u32 node_counts[NODE_TYPE_END]{};
+  int max_depth{};
+  u32 num_nodes{};
+  get_dpst_statistics(node_counts, max_depth, print_dpst);
+  Printf("\nDPST Statistics\n");
+  for (u32 i = 0; i < NODE_TYPE_END; i++) {
+    Printf("%s nodes: %u\n", node_desc[i], node_counts[i]);
+    num_nodes += node_counts[i];
+  }
+  Printf("Total number of nodes: %u\n", num_nodes);
+  Printf("Max depth: %d\n", max_depth);
+  Printf("=============================================================\n");
 }
 
-
 INTERFACE_ATTRIBUTE
-void set_ompt_ready(bool b){
+void __tsan_set_ompt_ready(bool b){
     ompt_ready = b;
 }
 
