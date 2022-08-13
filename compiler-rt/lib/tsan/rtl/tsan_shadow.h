@@ -77,16 +77,16 @@ class Shadow {
   //   newpart_.stepid = step_id;
   // }
 
-  Shadow(bool is_atomic, bool is_free, u32 step_id) {
+  Shadow(bool is_atomic, bool is_freed, u32 step_id) {
     u32 raw = static_cast<u32>(is_atomic) << kIsAtomicShift |
-              static_cast<u32>(is_free) << kIsFreeShift | step_id;
+              static_cast<u32>(is_freed) << kIsFreeShift | step_id;
     this->raw_ = raw;
   }
 
   explicit Shadow(RawShadow x = Shadow::kEmpty) { raw_ = static_cast<u32>(x); }
 
   u32 step_id() const {return newpart_.step_id_; };
-  bool is_freed() const {return newpart_.is_free_; };
+  bool is_freed() const {return newpart_.is_freed_; };
   bool is_atomic() const {return newpart_.is_atomic_; };
   
   RawShadow raw() const { return static_cast<RawShadow>(raw_); }
@@ -178,7 +178,7 @@ class Shadow {
     //u32 step_id_ : 22;
     //u32 is_read_ : 1;
     u32 step_id_ : 30;
-    u32 is_free_ : 1;
+    u32 is_freed_ : 1;
     u32 is_atomic_ : 1;
   };
   

@@ -34,4 +34,3 @@ __tsan_insert_tree_node
 __tsan_insert_leaf
 __tsan_set_task_in_tls
 __tsan_print_dpst_info
-__tsan_set_ompt_ready

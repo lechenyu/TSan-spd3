@@ -344,7 +344,6 @@ struct Context {
 };
 
 extern Context *ctx;  // The one and the only global runtime context.
-extern bool ompt_ready;
 
 ALWAYS_INLINE Flags *flags() {
   return &ctx->flags;
@@ -488,6 +487,8 @@ int Finalize(ThreadState *thr);
 
 void OnUserAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
 void OnUserFree(ThreadState *thr, uptr pc, uptr p, bool write);
+
+void OnAnnAlloc(ThreadState *thr, uptr pc, uptr p, uptr sz, bool write);
 
 void MemoryAccess(ThreadState *thr, uptr pc, uptr addr, uptr size,
                   AccessType typ);

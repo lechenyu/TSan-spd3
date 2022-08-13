@@ -133,12 +133,13 @@ TreeNode *__tsan_insert_leaf(TreeNode *task_node){
 }
 
 static void print_node(TreeNode *t) {
+  constexpr uptr mask = 0xFFFFUL;
   Printf("[%s_%lu]", node_desc[t->this_node_type],
-         t->corresponding_step_index ? t->corresponding_step_index : (uptr)t);
+         t->corresponding_step_index ? t->corresponding_step_index : (uptr)t & mask);
   TreeNode *p = t->parent;
   if (p) {
     Printf("(%s_%lu[%u])", node_desc[p->this_node_type],
-           p->corresponding_step_index ? p->corresponding_step_index : (uptr)p,
+           p->corresponding_step_index ? p->corresponding_step_index : (uptr)p & mask,
            t->is_parent_nth_child);
   }
 }
@@ -147,13 +148,16 @@ static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
   if (!dpst.root) {
     return;
   }
+  if (print_dpst) {
+    Printf("DPST Structure: \n");
+  }
   Vector<TreeNode *> v1, v2;
   Vector<TreeNode *> *curr = &v1, *next = &v2;
   curr->PushBack(dpst.root);
   u32 level = 0;
   while (curr->Size()) {
     if (print_dpst) {
-      Printf("\n Level %u: ", level);
+      Printf(" Level %u: ", level);
     }
     for (TreeNode *t : *curr) {
       if (print_dpst) {
@@ -170,6 +174,9 @@ static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
     level++;
     Swap(curr, next);
     next->Clear();
+    if (print_dpst) {
+      Printf("\n");
+    }
   }
 }
 
@@ -180,7 +187,7 @@ void __tsan_print_dpst_info(bool print_dpst) {
   int max_depth{};
   u32 num_nodes{};
   get_dpst_statistics(node_counts, max_depth, print_dpst);
-  Printf("\nDPST Statistics\n");
+  Printf("\nDPST Statistics:\n");
   for (u32 i = 0; i < NODE_TYPE_END; i++) {
     Printf("%s nodes: %u\n", node_desc[i], node_counts[i]);
     num_nodes += node_counts[i];
@@ -188,11 +195,6 @@ void __tsan_print_dpst_info(bool print_dpst) {
   Printf("Total number of nodes: %u\n", num_nodes);
   Printf("Max depth: %d\n", max_depth);
   Printf("=============================================================\n");
-}
-
-INTERFACE_ATTRIBUTE
-void __tsan_set_ompt_ready(bool b){
-    ompt_ready = b;
 }
 
 } // extern C

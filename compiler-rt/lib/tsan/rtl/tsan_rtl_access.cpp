@@ -16,7 +16,6 @@
 namespace __tsan {
 constexpr u32 vector_fix_size = 1000000;
 ConcurrencyVector step_nodes(vector_fix_size);
-bool ompt_ready = false;
 
 // For DPST purpose, we assume shadow_mem[0] stores the last writer
 // shadow_mem[1] stores the leftmost reader, shadow_mem[2] stores the rightmost reader
@@ -556,7 +555,9 @@ NOINLINE void DoReportRaceDPST(ThreadState *thr, Shadow prev, u32 curr_step_id, 
   if (!flags()->report_bugs || thr->suppress_reports) {
     return;
   }
-  Printf("Error type: %s at %016lx\n", kRaceTypeName[race_type], addr);
+  // Printf("Error type: %s at %016lx\n", kRaceTypeName[race_type], addr);
+  // Printf("Previous step: %u, current step: %u\n", prev.step_id(), curr_step_id);
+  Printf("Error type: %s at %016lx, Prev step: %u, Curr step: %u\n", kRaceTypeName[race_type], addr, prev.step_id(), curr_step_id);
   PrintPC(pc);
 }
 
@@ -568,11 +569,6 @@ NOINLINE void DoReportRaceDPST(ThreadState *thr, Shadow prev, u32 curr_step_id, 
 ALWAYS_INLINE
 bool CheckWrite(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                 AccessType typ, uptr addr, uptr pc = 0) {
-
-  if(!ompt_ready) {
-    return false;
-  }
-
   u32 curr_step_id = cur.step_id();
   u32 prev_write = LoadWriteShadow(shadow_mem);
   Shadow w(static_cast<RawShadow>(prev_write));
@@ -621,10 +617,6 @@ bool CheckWrite(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 ALWAYS_INLINE
 bool CheckRead(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
                AccessType typ, uptr addr, uptr pc = 0) {
-  if(!ompt_ready) {
-    return false;
-  }
-
   u32 curr_step_id = cur.step_id();
   u32 prev_write = LoadWriteShadow(shadow_mem);
   Shadow w(static_cast<RawShadow>(prev_write));
@@ -702,7 +694,7 @@ ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
   // TODO: decide if we want to use the following if statement
   // if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
   //   return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
-
+  // Printf("addr = %p, shadow = %p, size = %lu\n", (char *)addr, shadow_mem, size);
   if (typ & kAccessRead) {
     CheckRead(thr, shadow_mem, cur, typ, addr, pc);
   } else {
