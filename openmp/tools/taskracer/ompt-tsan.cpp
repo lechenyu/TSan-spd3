@@ -95,6 +95,7 @@ void __attribute__((weak)) AnnotateNewMemory(const char *f, int l, const volatil
 ompt_get_task_info_t ompt_get_task_info;
 ompt_set_callback_t ompt_set_callback;
 ompt_get_thread_data_t ompt_get_thread_data;
+ompt_get_task_memory_t ompt_get_task_memory;
 
 
 static std::atomic<int> task_id_counter(1);
@@ -408,6 +409,22 @@ static void ompt_ta_task_schedule(
   TsanNewMemory(static_cast<char *>(__builtin_frame_address(0)) -
                     kDefaultStackSize,
                 kDefaultStackSize);
+  if (prior_task_status == ompt_task_complete ||
+      prior_task_status == ompt_task_late_fulfill) {
+    if (ompt_get_task_memory) {
+      void *addr;
+      size_t size;
+      int ret_task_memory = 1, block = 0;
+      while (ret_task_memory) {
+        ret_task_memory = ompt_get_task_memory(&addr, &size, block);
+        if (size > 0) {
+          TsanNewMemory(((void**)addr), size+8);
+        }
+        block++;
+      }
+    }
+    
+  }
   __tsan_set_task_in_tls(next_task_node);
 }
 
@@ -432,6 +449,7 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
   GET_ENTRY_POINT(set_callback);
   GET_ENTRY_POINT(get_task_info);
   GET_ENTRY_POINT(get_thread_data);
+  GET_ENTRY_POINT(get_task_memory);
 
   SET_CALLBACK(task_create);
   SET_CALLBACK(parallel_begin);
