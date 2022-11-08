@@ -73,25 +73,40 @@ class Shadow {
   //   DCHECK_EQ(sid(), sid0);
   //   DCHECK_EQ(epoch(), epoch0);
   // }
-  // Shadow(u32 step_id) {
-  //   newpart_.stepid = step_id;
-  // }
 
-  Shadow(bool is_atomic, bool is_freed, u32 step_id) {
+  Shadow(u8 access, Sid sid, Epoch epoch, bool is_read, bool is_atomic) {
+    part_.access_ = access;
+    part_.sid_ = sid;
+    part_.epoch_ = static_cast<u16>(epoch);
+    raw_ |= ((static_cast<u32>(is_atomic) << kIsAtomicShift) | (static_cast<u32>(is_read) << kIsReadShift));
+  }
+  
+  Shadow(bool is_atomic, bool is_freed, u32 addr, u32 size, u32 step_id) {
+    u8 access = ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
+    u8 mask = ((access & 0xf0) ? 0x2 : 0x0) | ((access & 0xf) ? 0x1 : 0x0);
+
     u32 raw = static_cast<u32>(is_atomic) << kIsAtomicShift |
-              static_cast<u32>(is_freed) << kIsFreeShift | step_id;
+              static_cast<u32>(is_freed) << kIsFreeShift |
+              static_cast<u32>(mask) << kAccessMaskShift | 
+              step_id;
     this->raw_ = raw;
   }
 
   explicit Shadow(RawShadow x = Shadow::kEmpty) { raw_ = static_cast<u32>(x); }
 
-  u32 step_id() const {return newpart_.step_id_; };
-  bool is_freed() const {return newpart_.is_freed_; };
-  bool is_atomic() const {return newpart_.is_atomic_; };
+  u32 step_id() const {return newpart_.step_id_; }
+  bool is_freed() const {return newpart_.is_freed_; }
+  bool is_atomic() const {return newpart_.is_atomic_; }
+  u8 access_mask() const {return newpart_.access_mask_; }
+  
+  u8 ConvertMaskToAccess() const {
+    u8 mask = access_mask();
+    return is_freed() ? kFreeAccess: mask == 0x3 ? 0xff : mask == 0x2 ? 0xf0 : mask == 0x1 ? 0x0f : 0x00;
+  }
   
   RawShadow raw() const { return static_cast<RawShadow>(raw_); }
-  // Sid sid() const { return part_.sid_; }
-  // Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
+  Sid sid() const { return part_.sid_; }
+  Epoch epoch() const { return static_cast<Epoch>(part_.epoch_); }
   // u8 access() const { return part_.access_; }
 
   void GetAccess(uptr *addr, uptr *size, AccessType *typ) const {
@@ -159,7 +174,7 @@ class Shadow {
   // }
 
   static RawShadow FreedMarker(u32 step_id) {
-    Shadow s(false, true, step_id);
+    Shadow s(false, true, 0, 8, step_id);
     return s.raw();
   }
 
@@ -177,9 +192,10 @@ class Shadow {
     //u32 access_ : 8;
     //u32 step_id_ : 22;
     //u32 is_read_ : 1;
-    u32 step_id_ : 30;
-    u32 is_freed_ : 1;
-    u32 is_atomic_ : 1;
+    u32 step_id_      : 28;
+    u32 access_mask_  : 2;
+    u32 is_freed_     : 1;
+    u32 is_atomic_    : 1;
   };
   
   union {
@@ -194,8 +210,8 @@ class Shadow {
   static constexpr uptr kAccessShift = 0;
   static constexpr uptr kIsReadShift = 30;
   static constexpr uptr kIsAtomicShift = 31;
-
   static constexpr uptr kIsFreeShift = 30;
+  static constexpr uptr kAccessMaskShift = 28;
 #else
   static constexpr uptr kAccessShift = 24;
   static constexpr uptr kIsReadShift = 1;

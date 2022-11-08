@@ -14,7 +14,7 @@
 #include "tsan_rtl.h"
 #include "concurrency_vector.h"
 namespace __tsan {
-constexpr u32 vector_fix_size = 1000000;
+constexpr u32 vector_fix_size = 200000000;
 ConcurrencyVector step_nodes(vector_fix_size);
 
 // For DPST purpose, we assume shadow_mem[0] stores the last writer
@@ -542,23 +542,32 @@ NOINLINE void TraceRestartMemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 }
 
 enum RaceType {
-  ReadWriteRace,
-  WriteReadRace,
-  WriteWriteRace,
-  AccessFreedMem
+  WriteWriteRace = 0,
+  WriteReadRace  = 1,
+  ReadWriteRace  = 2,
+  AccessFreedMem = 4
 };
 
-static const char* kRaceTypeName[] = {"read-write-race", "write-read-race",
-                                      "write-write-race", "use-after-free"};
+static const char* kRaceTypeName[] = {"write-write-race", "write-read-race",
+                                      "read-write-race", "", "use-after-free"};
 
-NOINLINE void DoReportRaceDPST(ThreadState *thr, Shadow prev, u32 curr_step_id, RaceType race_type, uptr addr, uptr pc) {
+NOINLINE void DoReportRaceDPST(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow prev, RaceType race_type, AccessType typ, uptr addr, uptr pc) {
   if (!flags()->report_bugs || thr->suppress_reports) {
     return;
   }
-  // Printf("Error type: %s at %016lx\n", kRaceTypeName[race_type], addr);
-  // Printf("Previous step: %u, current step: %u\n", prev.step_id(), curr_step_id);
-  Printf("Error type: %s at %016lx, Prev step: %u, Curr step: %u\n", kRaceTypeName[race_type], addr, prev.step_id(), curr_step_id);
-  PrintPC(pc);
+  
+  u32 curr_step_id = cur.step_id();
+  u32 prev_step_id = prev.step_id();
+  const TreeNode &curr_step = step_nodes[curr_step_id];
+  const TreeNode &prev_step = step_nodes[prev_step_id];
+  u8 rt_val = static_cast<u8>(race_type);
+  
+  //u8 access, Sid sid, u16 epoch, bool is_read, bool is_atomic
+  Shadow prev_tsan(prev.ConvertMaskToAccess(), prev_step.sid, prev_step.ev, rt_val & 0x2, prev.is_atomic());
+  Shadow cur_tsan(cur.ConvertMaskToAccess(), curr_step.sid, curr_step.ev, typ & kAccessRead, typ & kAccessAtomic);
+  //Printf("Error type: %s at %016lx, Prev step: %u, Curr step: %u\n", kRaceTypeName[race_type], addr, prev_step_id, curr_step_id);
+  ReportRace(thr, shadow_mem, cur_tsan, prev_tsan, typ);
+  // PrintPC(pc);
 }
 
 // #  define LOAD_CURRENT_SHADOW(cur, shadow_mem)                         \
@@ -568,25 +577,25 @@ NOINLINE void DoReportRaceDPST(ThreadState *thr, Shadow prev, u32 curr_step_id, 
 
 ALWAYS_INLINE
 bool CheckWrite(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
-                AccessType typ, uptr addr, uptr pc = 0) {
+                AccessType typ, uptr addr, uptr pc) {
   u32 curr_step_id = cur.step_id();
   u32 prev_write = LoadWriteShadow(shadow_mem);
   Shadow w(static_cast<RawShadow>(prev_write));
   
   if (w.is_freed()) {
-    DoReportRaceDPST(thr, w, curr_step_id, AccessFreedMem, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, w, AccessFreedMem, typ, addr, pc);
     return true;
   }
-
+  //Printf("%u Write %p\n", curr_step_id, addr);
   if (curr_step_id == w.step_id()) {
     return false;
   }
-
+  
   TreeNode *curr_step = &step_nodes[curr_step_id];
   if (w.raw() != Shadow::kEmpty &&
       !precede_dpst_new(&step_nodes[w.step_id()],
                         curr_step, nullptr, nullptr)) {
-    DoReportRaceDPST(thr, w, curr_step_id, WriteWriteRace, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, w, WriteWriteRace, typ, addr, pc);
     return true;
   }
 
@@ -596,14 +605,14 @@ bool CheckWrite(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   if (r1.raw() != Shadow::kEmpty &&
       !precede_dpst_new(&step_nodes[r1.step_id()],
                         curr_step, nullptr, nullptr)) {
-    DoReportRaceDPST(thr, r1, curr_step_id, ReadWriteRace, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, r1, ReadWriteRace, typ, addr, pc);
     return true;
   }
 
   if (r2.raw() != Shadow::kEmpty &&
       !precede_dpst_new(&step_nodes[r2.step_id()],
                         curr_step, nullptr, nullptr)) {
-    DoReportRaceDPST(thr, r2, curr_step_id, ReadWriteRace, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, r2, ReadWriteRace, typ, addr, pc);
     return true;
   }
 
@@ -616,16 +625,16 @@ bool CheckWrite(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 
 ALWAYS_INLINE
 bool CheckRead(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
-               AccessType typ, uptr addr, uptr pc = 0) {
+               AccessType typ, uptr addr, uptr pc) {
   u32 curr_step_id = cur.step_id();
   u32 prev_write = LoadWriteShadow(shadow_mem);
   Shadow w(static_cast<RawShadow>(prev_write));
 
   if (w.is_freed()) {
-    DoReportRaceDPST(thr, w, curr_step_id, AccessFreedMem, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, w, AccessFreedMem, typ, addr, pc);
     return true;
   }
-
+  //Printf("%u Read %p\n", curr_step_id, addr);
   u64 prev_reads = LoadReadShadow(shadow_mem);
   Shadow r1(static_cast<RawShadow>(static_cast<u32>(prev_reads >> 32)));
   Shadow r2(static_cast<RawShadow>(static_cast<u32>(prev_reads)));
@@ -639,7 +648,7 @@ bool CheckRead(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
   if (w.raw() != Shadow::kEmpty &&
       !precede_dpst_new(&step_nodes[w.step_id()],
                         curr_step, nullptr, nullptr)) {
-    DoReportRaceDPST(thr, w, curr_step_id, WriteReadRace, addr, pc);
+    DoReportRaceDPST(thr, shadow_mem, cur, w, WriteReadRace, typ, addr, pc);
     return true;
   }
   
@@ -685,15 +694,15 @@ ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
   if (UNLIKELY(fast_state.GetIgnoreBit()))
     return;
 
-  Shadow cur(typ & kAccessAtomic, false, curr_step_id);
+  Shadow cur(typ & kAccessAtomic, typ & kAccessFree, addr, size, curr_step_id);
 
   if (UNLIKELY(static_cast<RawShadow>(LoadWriteShadow(shadow_mem)) == Shadow::kRodata)) {
     return;
   }
 
   // TODO: decide if we want to use the following if statement
-  // if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
-  //   return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
+  if (!TryTraceMemoryAccess(thr, pc, addr, size, typ))
+    return TraceRestartMemoryAccess(thr, pc, addr, size, typ);
   // Printf("addr = %p, shadow = %p, size = %lu\n", (char *)addr, shadow_mem, size);
   if (typ & kAccessRead) {
     CheckRead(thr, shadow_mem, cur, typ, addr, pc);
@@ -747,7 +756,7 @@ ALWAYS_INLINE USED void MemoryAccess16(ThreadState* thr, uptr pc, uptr addr,
   FastState fast_state = thr->fast_state;
   if (UNLIKELY(fast_state.GetIgnoreBit()))
     return;
-  Shadow cur(typ & kAccessAtomic, false, curr_step_id);
+  Shadow cur(typ & kAccessAtomic, false, 0, 8, curr_step_id);
   RawShadow* shadow_mem = MemToShadow(addr);
   
   if (UNLIKELY(static_cast<RawShadow>(LoadWriteShadow(shadow_mem)) == Shadow::kRodata)) {
@@ -794,9 +803,9 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
   }
 
   uptr size1 = Min<uptr>(size, RoundUp(addr + 1, kShadowCell) - addr);
-  Shadow cur(typ & kAccessAtomic, false, curr_step_id);
-    // if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
-    //   return RestartUnalignedMemoryAccess(thr, pc, addr, size, typ);
+  Shadow cur(typ & kAccessAtomic, false, addr, size1, curr_step_id);
+  if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
+    return RestartUnalignedMemoryAccess(thr, pc, addr, size, typ);
   if (typ & kAccessRead) {
     if (UNLIKELY(CheckRead(thr, shadow_mem, cur, typ, addr, pc))) {
       return;
@@ -805,8 +814,10 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
     if (LIKELY(size2 == 0)) {
       return;
     }
+    addr = RoundUp(addr + 1, kShadowCell);
     shadow_mem += kShadowCnt;
-    CheckRead(thr, shadow_mem, cur, typ, addr + size1, pc);
+    Shadow cur_next(typ & kAccessAtomic, false, 0, size2, curr_step_id);
+    CheckRead(thr, shadow_mem, cur_next, typ, addr, pc);
   } else {
     if (UNLIKELY(CheckWrite(thr, shadow_mem, cur, typ, addr, pc))) {
       return;
@@ -815,8 +826,10 @@ ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
     if (LIKELY(size2 == 0)) {
       return;
     }
+    addr = RoundUp(addr + 1, kShadowCell);
     shadow_mem += kShadowCnt;
-    CheckWrite(thr, shadow_mem, cur, typ, addr + size1, pc);
+    Shadow cur_next(typ & kAccessAtomic, false, 0, size2, curr_step_id);
+    CheckWrite(thr, shadow_mem, cur_next, typ, addr, pc);
   }
 }
 
@@ -896,10 +909,10 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   // the whole range) and most likely unnecessary.
   size = Min<uptr>(size, 1024);
   const AccessType typ = kAccessWrite | kAccessFree | kAccessSlotLocked | kAccessNoRodata;
-  // TraceMemoryAccessRange(thr, pc, addr, size, typ);
+  TraceMemoryAccessRange(thr, pc, addr, size, typ);
   RawShadow* shadow_mem = MemToShadow(addr);
-  Shadow cur(false, true, curr_step_id);
   uptr address = addr;
+  Shadow cur(false, true, 0, kShadowCell, curr_step_id);
   for (; size; size -= kShadowCell, shadow_mem += kShadowCnt, address += kShadowCell) {
     if (UNLIKELY(CheckWrite(thr, shadow_mem, cur, typ, address, pc)))
       return;
@@ -913,8 +926,8 @@ void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   }
   DCHECK_EQ(addr % kShadowCell, 0);
   size = RoundUp(size, kShadowCell);
-  // TraceMemoryAccessRange(thr, pc, addr, size, kAccessWrite);
-  Shadow cur(false, false, curr_step_id);
+  TraceMemoryAccessRange(thr, pc, addr, size, kAccessWrite);
+  Shadow cur(false, false, 0, kShadowCell, curr_step_id);
   MemoryRangeSet(addr, size, cur.raw());
 }
 
@@ -994,14 +1007,14 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   if (UNLIKELY(fast_state.GetIgnoreBit()))
     return;
 
-  // if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
-  //   return RestartMemoryAccessRange<is_read>(thr, pc, addr, size);
+  if (!TryTraceMemoryAccessRange(thr, pc, addr, size, typ))
+    return RestartMemoryAccessRange<is_read>(thr, pc, addr, size);
 
   uptr address = addr;
-  Shadow cur(false, false, curr_step_id);
   if (UNLIKELY(addr % kShadowCell)) {
     // Handle unaligned beginning, if any.
     uptr size1 = Min(size, RoundUp(addr, kShadowCell) - addr);
+    Shadow cur(false, false, addr, size1, curr_step_id);
     size -= size1;
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ, addr, pc)))
       return;
@@ -1009,13 +1022,14 @@ void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size) {
     address += size1;
   }
   // Handle middle part, if any.
-
+  Shadow cur(false, false, 0, kShadowCell, curr_step_id);
   for (; size >= kShadowCell; size -= kShadowCell, shadow_mem += kShadowCnt, address += kShadowCell) {
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ, address, pc)))
       return;
   }
   // Handle ending, if any.
   if (UNLIKELY(size)) {
+    Shadow cur(false, false, 0, size, curr_step_id);
     if (UNLIKELY(MemoryAccessRangeOne(thr, shadow_mem, cur, typ, address, pc)))
       return;
   }

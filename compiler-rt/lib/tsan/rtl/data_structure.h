@@ -1,6 +1,6 @@
 #ifndef   DATA_STRUCTURE_H
 #define   DATA_STRUCTURE_H
-
+#include "tsan_defs.h"
 namespace __tsan {
 enum NodeType {
   ROOT,
@@ -21,6 +21,8 @@ typedef struct TreeNode {
   int number_of_child;
   int is_parent_nth_child;
   int preceeding_taskwait;
+  Sid sid;
+  Epoch ev;
   TreeNode *parent;
   TreeNode *children_list_head;
   TreeNode *children_list_tail;

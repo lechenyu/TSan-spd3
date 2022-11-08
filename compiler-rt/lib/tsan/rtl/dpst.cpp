@@ -107,29 +107,34 @@ TreeNode *__tsan_insert_tree_node(NodeType nodeType, TreeNode *parent){
  * @retval the newly inserted leaf(step) node
  */
 INTERFACE_ATTRIBUTE
-TreeNode *__tsan_insert_leaf(TreeNode *task_node){
-    int preceeding_taskwait = (task_node->children_list_head) ? task_node->children_list_tail->preceeding_taskwait : -1;
-    TreeNode &n = step_nodes.EmplaceBack(task_node->corresponding_task_id, STEP, task_node->depth + 1, task_node->number_of_child, preceeding_taskwait, task_node);   
-    TreeNode *new_step = &n;
-    task_node->number_of_child += 1;
-    
-    if(task_node->children_list_head == nullptr){
-        task_node->children_list_head = new_step;
-        task_node->children_list_tail = new_step;
-    }
-    else{
-        task_node->children_list_tail->next_sibling = new_step;
-        task_node->children_list_tail = new_step;
-    }
+TreeNode *__tsan_insert_leaf(TreeNode *task_node) {
+  ThreadState *thr = cur_thread();
+  int preceeding_taskwait =
+      (task_node->children_list_head)
+          ? task_node->children_list_tail->preceeding_taskwait
+          : -1;
+  TreeNode &n = step_nodes.EmplaceBack(
+      task_node->corresponding_task_id, STEP, task_node->depth + 1,
+      task_node->number_of_child, preceeding_taskwait, thr->fast_state.sid(), thr->fast_state.epoch(), task_node);
+  TreeNode *new_step = &n;
+  task_node->number_of_child += 1;
 
-    // u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
-    // atomic_store(atomic_step_index,step_index+1,memory_order_consume);
+  if (task_node->children_list_head == nullptr) {
+    task_node->children_list_head = new_step;
+    task_node->children_list_tail = new_step;
+  } else {
+    task_node->children_list_tail->next_sibling = new_step;
+    task_node->children_list_tail = new_step;
+  }
 
-    // new_step->corresponding_step_index = step_index;
-    // step_nodes[step_index] = new_step;
-    // Printf("insert into %d\n", step_index);
+  // u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
+  // atomic_store(atomic_step_index,step_index+1,memory_order_consume);
 
-    return new_step;
+  // new_step->corresponding_step_index = step_index;
+  // step_nodes[step_index] = new_step;
+  // Printf("insert into %d\n", step_index);
+
+  return new_step;
 }
 
 static void print_node(TreeNode *t) {

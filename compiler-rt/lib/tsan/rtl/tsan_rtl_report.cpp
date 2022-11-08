@@ -732,129 +732,129 @@ static bool IsFiredSuppression(Context *ctx, ReportType type, uptr addr) {
 
 void ReportRace(ThreadState *thr, RawShadow *shadow_mem, Shadow cur, Shadow old,
                 AccessType typ0) {
-//   CheckedMutex::CheckNoLocks();
+  CheckedMutex::CheckNoLocks();
 
-//   // Symbolizer makes lots of intercepted calls. If we try to process them,
-//   // at best it will cause deadlocks on internal mutexes.
-//   ScopedIgnoreInterceptors ignore;
+  // Symbolizer makes lots of intercepted calls. If we try to process them,
+  // at best it will cause deadlocks on internal mutexes.
+  ScopedIgnoreInterceptors ignore;
 
-//   uptr addr = ShadowToMem(shadow_mem);
-//   DPrintf("#%d: ReportRace %p\n", thr->tid, (void *)addr);
-//   if (!ShouldReport(thr, ReportTypeRace))
-//     return;
-//   uptr addr_off0, size0;
-//   cur.GetAccess(&addr_off0, &size0, nullptr);
-//   uptr addr_off1, size1, typ1;
-//   old.GetAccess(&addr_off1, &size1, &typ1);
-//   if (!flags()->report_atomic_races &&
-//       ((typ0 & kAccessAtomic) || (typ1 & kAccessAtomic)) &&
-//       !(typ0 & kAccessFree) && !(typ1 & kAccessFree))
-//     return;
+  uptr addr = ShadowToMem(shadow_mem);
+  DPrintf("#%d: ReportRace %p\n", thr->tid, (void *)addr);
+  if (!ShouldReport(thr, ReportTypeRace))
+    return;
+  uptr addr_off0, size0;
+  cur.GetAccess(&addr_off0, &size0, nullptr);
+  uptr addr_off1, size1, typ1;
+  old.GetAccess(&addr_off1, &size1, &typ1);
+  if (!flags()->report_atomic_races &&
+      ((typ0 & kAccessAtomic) || (typ1 & kAccessAtomic)) &&
+      !(typ0 & kAccessFree) && !(typ1 & kAccessFree))
+    return;
 
-//   const uptr kMop = 2;
-//   Shadow s[kMop] = {cur, old};
-//   uptr addr0 = addr + addr_off0;
-//   uptr addr1 = addr + addr_off1;
-//   uptr end0 = addr0 + size0;
-//   uptr end1 = addr1 + size1;
-//   uptr addr_min = min(addr0, addr1);
-//   uptr addr_max = max(end0, end1);
-//   if (IsExpectedReport(addr_min, addr_max - addr_min))
-//     return;
-//   if (HandleRacyAddress(thr, addr_min, addr_max))
-//     return;
+  const uptr kMop = 2;
+  Shadow s[kMop] = {cur, old};
+  uptr addr0 = addr + addr_off0;
+  uptr addr1 = addr + addr_off1;
+  uptr end0 = addr0 + size0;
+  uptr end1 = addr1 + size1;
+  uptr addr_min = min(addr0, addr1);
+  uptr addr_max = max(end0, end1);
+  if (IsExpectedReport(addr_min, addr_max - addr_min))
+    return;
+  if (HandleRacyAddress(thr, addr_min, addr_max))
+    return;
 
-//   ReportType rep_typ = ReportTypeRace;
-//   if ((typ0 & kAccessVptr) && (typ1 & kAccessFree))
-//     rep_typ = ReportTypeVptrUseAfterFree;
-//   else if (typ0 & kAccessVptr)
-//     rep_typ = ReportTypeVptrRace;
-//   else if (typ1 & kAccessFree)
-//     rep_typ = ReportTypeUseAfterFree;
+  ReportType rep_typ = ReportTypeRace;
+  if ((typ0 & kAccessVptr) && (typ1 & kAccessFree))
+    rep_typ = ReportTypeVptrUseAfterFree;
+  else if (typ0 & kAccessVptr)
+    rep_typ = ReportTypeVptrRace;
+  else if (typ1 & kAccessFree)
+    rep_typ = ReportTypeUseAfterFree;
 
-//   if (IsFiredSuppression(ctx, rep_typ, addr))
-//     return;
+  if (IsFiredSuppression(ctx, rep_typ, addr))
+    return;
 
-//   VarSizeStackTrace traces[kMop];
-//   Tid tids[kMop] = {thr->tid, kInvalidTid};
-//   uptr tags[kMop] = {kExternalTagNone, kExternalTagNone};
+  VarSizeStackTrace traces[kMop];
+  Tid tids[kMop] = {thr->tid, kInvalidTid};
+  uptr tags[kMop] = {kExternalTagNone, kExternalTagNone};
 
-//   ObtainCurrentStack(thr, thr->trace_prev_pc, &traces[0], &tags[0]);
-//   if (IsFiredSuppression(ctx, rep_typ, traces[0]))
-//     return;
+  ObtainCurrentStack(thr, thr->trace_prev_pc, &traces[0], &tags[0]);
+  if (IsFiredSuppression(ctx, rep_typ, traces[0]))
+    return;
 
-//   DynamicMutexSet mset1;
-//   MutexSet *mset[kMop] = {&thr->mset, mset1};
+  DynamicMutexSet mset1;
+  MutexSet *mset[kMop] = {&thr->mset, mset1};
 
-//   // We need to lock the slot during RestoreStack because it protects
-//   // the slot journal.
-//   Lock slot_lock(&ctx->slots[static_cast<uptr>(s[1].sid())].mtx);
-//   ThreadRegistryLock l0(&ctx->thread_registry);
-//   Lock slots_lock(&ctx->slot_mtx);
-//   if (!RestoreStack(EventType::kAccessExt, s[1].sid(), s[1].epoch(), addr1,
-//                     size1, typ1, &tids[1], &traces[1], mset[1], &tags[1]))
-//     return;
+  // We need to lock the slot during RestoreStack because it protects
+  // the slot journal.
+  Lock slot_lock(&ctx->slots[static_cast<uptr>(s[1].sid())].mtx);
+  ThreadRegistryLock l0(&ctx->thread_registry);
+  Lock slots_lock(&ctx->slot_mtx);
+  if (!RestoreStack(EventType::kAccessExt, s[1].sid(), s[1].epoch(), addr1,
+                    size1, typ1, &tids[1], &traces[1], mset[1], &tags[1]))
+    return;
 
-//   if (IsFiredSuppression(ctx, rep_typ, traces[1]))
-//     return;
+  if (IsFiredSuppression(ctx, rep_typ, traces[1]))
+    return;
 
-//   if (HandleRacyStacks(thr, traces))
-//     return;
+  if (HandleRacyStacks(thr, traces))
+    return;
 
-//   // If any of the accesses has a tag, treat this as an "external" race.
-//   uptr tag = kExternalTagNone;
-//   for (uptr i = 0; i < kMop; i++) {
-//     if (tags[i] != kExternalTagNone) {
-//       rep_typ = ReportTypeExternalRace;
-//       tag = tags[i];
-//       break;
-//     }
-//   }
-
-//   ScopedReport rep(rep_typ, tag);
-//   for (uptr i = 0; i < kMop; i++)
-//     rep.AddMemoryAccess(addr, tags[i], s[i], tids[i], traces[i], mset[i]);
-
-//   for (uptr i = 0; i < kMop; i++) {
-//     ThreadContext *tctx = static_cast<ThreadContext *>(
-//         ctx->thread_registry.GetThreadLocked(tids[i]));
-//     rep.AddThread(tctx);
-//   }
-
-//   rep.AddLocation(addr_min, addr_max - addr_min);
-
-//   if (flags()->print_full_thread_history) {
-//     const ReportDesc *rep_desc = rep.GetReport();
-//     for (uptr i = 0; i < rep_desc->threads.Size(); i++) {
-//       Tid parent_tid = rep_desc->threads[i]->parent_tid;
-//       if (parent_tid == kMainTid || parent_tid == kInvalidTid)
-//         continue;
-//       ThreadContext *parent_tctx = static_cast<ThreadContext *>(
-//           ctx->thread_registry.GetThreadLocked(parent_tid));
-//       rep.AddThread(parent_tctx);
-//     }
-//   }
-
-// #if !SANITIZER_GO
-//   if (!((typ0 | typ1) & kAccessFree) &&
-//       s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
-//     rep.AddSleep(thr->last_sleep_stack_id);
-// #endif
-//   OutputReport(thr, rep);
-}
-
-void PrintPC(uptr pc) {
-  if (pc) {
-    SymbolizedStack *ent = SymbolizeCode(pc);
-    if (ent->info.file) {
-      Printf("Racy access at %s:%d\n", ent->info.file, ent->info.line);
-    } else {
-      Printf("Failed to recover source information (symbolizer failed)\n");
+  // If any of the accesses has a tag, treat this as an "external" race.
+  uptr tag = kExternalTagNone;
+  for (uptr i = 0; i < kMop; i++) {
+    if (tags[i] != kExternalTagNone) {
+      rep_typ = ReportTypeExternalRace;
+      tag = tags[i];
+      break;
     }
-  } else {
-    Printf("Failed to recover source information (pc == null)\n");
   }
+
+  ScopedReport rep(rep_typ, tag);
+  for (uptr i = 0; i < kMop; i++)
+    rep.AddMemoryAccess(addr, tags[i], s[i], tids[i], traces[i], mset[i]);
+
+  for (uptr i = 0; i < kMop; i++) {
+    ThreadContext *tctx = static_cast<ThreadContext *>(
+        ctx->thread_registry.GetThreadLocked(tids[i]));
+    rep.AddThread(tctx);
+  }
+
+  rep.AddLocation(addr_min, addr_max - addr_min);
+
+  if (flags()->print_full_thread_history) {
+    const ReportDesc *rep_desc = rep.GetReport();
+    for (uptr i = 0; i < rep_desc->threads.Size(); i++) {
+      Tid parent_tid = rep_desc->threads[i]->parent_tid;
+      if (parent_tid == kMainTid || parent_tid == kInvalidTid)
+        continue;
+      ThreadContext *parent_tctx = static_cast<ThreadContext *>(
+          ctx->thread_registry.GetThreadLocked(parent_tid));
+      rep.AddThread(parent_tctx);
+    }
+  }
+
+#if !SANITIZER_GO
+  if (!((typ0 | typ1) & kAccessFree) &&
+      s[1].epoch() <= thr->last_sleep_clock.Get(s[1].sid()))
+    rep.AddSleep(thr->last_sleep_stack_id);
+#endif
+  OutputReport(thr, rep);
 }
+
+// void PrintPC(uptr pc) {
+//   if (pc) {
+//     SymbolizedStack *ent = SymbolizeCode(pc);
+//     if (ent->info.file) {
+//       Printf("Racy access at %s:%d\n", ent->info.file, ent->info.line);
+//     } else {
+//       Printf("Failed to recover source information (symbolizer failed)\n");
+//     }
+//   } else {
+//     Printf("Failed to recover source information (pc == null)\n");
+//   }
+// }
 
 void PrintCurrentStack(ThreadState *thr, uptr pc) {
   VarSizeStackTrace trace;

@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstdint>
 #include <cassert>
 #include "omp-tools.h"
 #include "dlfcn.h"
@@ -13,6 +14,9 @@ enum NodeType {
   NODE_TYPE_END
 };
 
+enum class Sid : uint8_t {};
+
+enum class Epoch : uint16_t {};
 typedef struct TreeNode {
  public:
   // int index;
@@ -23,6 +27,8 @@ typedef struct TreeNode {
   int number_of_child;
   int is_parent_nth_child;
   int preceeding_taskwait;
+  Sid sid;
+  Epoch ev;
   TreeNode *parent;
   TreeNode *children_list_head;
   TreeNode *children_list_tail;
@@ -41,6 +47,7 @@ typedef struct task_t{
   TreeNode* node_in_dpst;
   // finish_t* belong_to_finish;
   finish_t* current_finish;
+  bool initialized;
 } task_t;
 
 static constexpr TreeNode *kNotOpenMPTask = nullptr;
@@ -194,6 +201,7 @@ static void ompt_ta_implicit_task(
       // main_ti->id = 0;
       // main_ti->parent_id = -1;
       main_ti->node_in_dpst = root;
+      main_ti->initialized = true;
       root->corresponding_task_id = task_id_counter.fetch_add(1, std::memory_order_relaxed);
 
       finish_t* main_finish_placeholder = (finish_t*) malloc(sizeof(finish_t));
@@ -240,7 +248,7 @@ static void ompt_ta_implicit_task(
       task_t* ti = (task_t*) malloc(sizeof(task_t));
       // ti->id = task_id_counter;
       ti->node_in_dpst = new_task_node;
-
+      ti->initialized = true;
       // set new task's belong_to_finish
       // if(current_task->current_finish != nullptr){
       //   ti->belong_to_finish = current_task->current_finish;
@@ -366,13 +374,14 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
     new_task_node = __tsan_insert_tree_node(ASYNC, parent_node);
 
     __tsan_insert_leaf(new_task_node->parent);
-    __tsan_insert_leaf(new_task_node);
+    //__tsan_insert_leaf(new_task_node);
     new_task_node->corresponding_task_id = task_id_counter.fetch_add(1, std::memory_order_relaxed);
 
   // C. Update task data
     task_t* ti = (task_t*) malloc(sizeof(task_t));
     // ti->id = task_id_counter;
     ti->node_in_dpst = new_task_node;
+    ti->initialized = false;
 
     // set new task's belong_to_finish
     // if(current_task->current_finish != nullptr){
@@ -397,11 +406,15 @@ static void ompt_ta_task_schedule(
 
   task_t* next_task = (task_t*) next_task_data->ptr;
   TreeNode* next_task_node = next_task->node_in_dpst;
+  if (!next_task->initialized) {
+    __tsan_insert_leaf(next_task_node);
+    next_task->initialized = true;
+  }
   // printf("OMPT! task_schedule, put task node in current thread \n");
   // printf("task %d, %p scheduled\n", next_task_node->corresponding_task_id, next_task_node);
   // printf("thread %lu, task %lu\n", ompt_get_thread_data()->value, (uintptr_t)next_task_node & 0xFFFFUL);
-  char *stack = static_cast<char *>(__builtin_frame_address(0));
-  TreeNode *prior_task_node = ((task_t *)prior_task_data->ptr)->node_in_dpst;
+  // char *stack = static_cast<char *>(__builtin_frame_address(0));
+  // TreeNode *prior_task_node = ((task_t *)prior_task_data->ptr)->node_in_dpst;
   //printf("task %lu, stack range [%p, %p]\n", (uintptr_t)next_task_node & 0xFFFFUL, stack - kDefaultStackSize, stack);
   // printf("tid = %lu, prior task %lu, next task %lu, %u\n",
   //        ompt_get_thread_data()->value, (uintptr_t)prior_task_node & 0xFFFFUL,
@@ -463,7 +476,7 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
 }
 
 static void ompt_tsan_finalize(ompt_data_t *tool_data) {
-  //__tsan_print_dpst_info(true);
+  __tsan_print_dpst_info(true);
 }
 
 static bool scan_tsan_runtime() {

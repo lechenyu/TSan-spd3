@@ -358,7 +358,7 @@ ompt_try_start_tool(unsigned int omp_version, const char *runtime_version) {
     constexpr const size_t buf_size = 100;
     char lib_full_name[buf_size];
     size_t lib_name_len = default_ompt_lib ? strlen(default_ompt_lib) : 0;
-    const char *lib_name = (lib_name_len && lib_name_len + strlen("lib.so") < buf_size) ? default_ompt_lib : "archer";
+    const char *lib_name = (lib_name_len && lib_name_len + strlen("lib.so") < buf_size) ? default_ompt_lib : "taskracer";
 
     const char *fname = lib_full_name;
     sprintf(lib_full_name, "lib%s.so", lib_name);
