@@ -27,7 +27,7 @@ class ConcurrencyVector {
     return begin_[i];
   }
 
-  TreeNode &EmplaceBack(int task_id, NodeType type, int depth, int nth_child, int preceeding_taskwait, Sid sid, Epoch ev, TreeNode *parent) {
+  TreeNode &EmplaceBack(NodeType type, int preceeding_taskwait, Sid sid, Epoch ev, TreeNode *parent) {
     int step_index = atomic_fetch_add(&size_, 1, memory_order_relaxed);
     if (UNLIKELY (step_index >= cap_)) {
       Printf("Concurrency vector reaches its capacity\n");
@@ -36,7 +36,7 @@ class ConcurrencyVector {
     // new (begin_ + step_index) TreeNode(task_id, step_index, type, depth,
     //                                    nth_child, preceeding_taskwait,
     //                                    parent);
-    begin_[step_index] = {task_id, step_index, type, depth, 0, nth_child, preceeding_taskwait, sid, ev, parent, nullptr, nullptr, nullptr, nullptr};
+    begin_[step_index] = {step_index, type, parent->depth + 1, 0, parent->number_of_child, preceeding_taskwait, sid, ev, parent, nullptr, nullptr, nullptr};
     return begin_[step_index];
   }
 

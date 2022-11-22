@@ -30,7 +30,11 @@ WTFAnnotate*
 RunningOnValgrind
 ValgrindSlowdown
 __tsan_print
-__tsan_insert_tree_node
+__tsan_init_DPST
+__tsan_reset_step_in_tls
+__tsan_set_step_in_tls
+__tsan_alloc_internal_node
+__tsan_insert_internal_node
+__tsan_alloc_insert_internal_node
 __tsan_insert_leaf
-__tsan_set_task_in_tls
-__tsan_print_dpst_info
+__tsan_print_DPST_info

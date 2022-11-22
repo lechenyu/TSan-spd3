@@ -232,7 +232,7 @@ struct ThreadState {
 
   const ReportDesc *current_report;
 
-  TreeNode *current_task_node;
+  int step_id;
   
   explicit ThreadState(Tid tid);
 } ALIGNED(SANITIZER_CACHE_LINE_SIZE);

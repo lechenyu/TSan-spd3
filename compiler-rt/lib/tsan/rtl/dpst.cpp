@@ -8,10 +8,10 @@ namespace __tsan{
 
 extern ConcurrencyVector step_nodes;
 
-// dpst data structure
-static DPST dpst;
+// dpst root
+TreeNode dpst_root;
 
-static const char* node_desc[] = {"Root","Finish", "Async", "Future", "Step", "TaskWait"};
+static const char* node_desc[] = {"Root", "TaskGroup", "Async_I", "Async_E", "Future", "Step", "TaskWait", "Parallel"};
 
 // static int node_index_base = 0;
 // atomic_uint32_t *atomic_node_index = reinterpret_cast<atomic_uint32_t *>(&node_index_base);
@@ -21,10 +21,34 @@ static const char* node_desc[] = {"Root","Finish", "Async", "Future", "Step", "T
 
 extern "C" {
 INTERFACE_ATTRIBUTE
-void __tsan_set_task_in_tls(TreeNode* node){
+void __tsan_reset_step_in_tls(){
+  ThreadState* current_thread = cur_thread();
+  current_thread->step_id = kNullStepId;
+}
+
+INTERFACE_ATTRIBUTE
+void __tsan_set_step_in_tls(int step_id){
     // Printf("new task node index is %d \n", node->index);
-    ThreadState* current_thread = cur_thread();
-    current_thread->current_task_node = node;
+  ThreadState* thr = cur_thread();
+  thr->step_id = step_id;
+}
+
+INTERFACE_ATTRIBUTE
+TreeNode *__tsan_init_DPST() {
+  ThreadState *thr = cur_thread();
+  dpst_root.corresponding_id = 0;
+  dpst_root.node_type = ASYNC_I;
+  dpst_root.depth = 0;
+  dpst_root.number_of_child = 0;
+  dpst_root.is_parent_nth_child = 0;
+  dpst_root.preceeding_taskwait = kNullStepId;
+  dpst_root.sid = thr->fast_state.sid();
+  dpst_root.ev = thr->fast_state.epoch();
+  dpst_root.parent = nullptr;
+  dpst_root.children_list_head = nullptr;
+  dpst_root.children_list_tail = nullptr;
+  dpst_root.next_sibling = nullptr;
+  return &dpst_root;
 }
 
 /**
@@ -32,28 +56,24 @@ void __tsan_set_task_in_tls(TreeNode* node){
  * @note   
  * @retval The newly created tree node
  */
-static TreeNode *newtreeNode()
+INTERFACE_ATTRIBUTE
+TreeNode *__tsan_alloc_internal_node(int internal_node_id, NodeType node_type, TreeNode *parent, int preceeding_taskwait)
 {
-    // Allocate memory for new node
-    // tree_node* node = new tree_node();
-    TreeNode *node = (TreeNode *) InternalAlloc(sizeof(TreeNode));
-    node->children_list_head = nullptr;
-    node->children_list_tail = nullptr;
-    node->next_sibling = nullptr;
-    node->current_finish_node = nullptr;
-
-    node->corresponding_task_id = -2;
-    node->number_of_child = 0;
-    node->is_parent_nth_child = 0;
-    node->preceeding_taskwait = -1;
-
-    // u32 node_index = atomic_load(atomic_node_index,memory_order_acquire);
-    // node->index = node_index;
-    // atomic_store(atomic_node_index,node_index+1,memory_order_consume);
-
-    node->corresponding_step_index = 0;
-
-    return node;
+  // Allocate memory for new node
+  // tree_node* node = new tree_node();
+  TreeNode *node = (TreeNode *)InternalAlloc(sizeof(TreeNode));
+  node->corresponding_id = internal_node_id;
+  node->node_type = node_type;
+  node->depth = parent->depth + 1;
+  node->number_of_child = 0;
+  node->is_parent_nth_child = parent->number_of_child;
+  node->preceeding_taskwait = preceeding_taskwait;
+  node->parent = parent;
+  node->children_list_head = nullptr;
+  node->children_list_tail = nullptr;
+  node->next_sibling = nullptr;
+  // Printf("new %p internal id %d, type %d, parent %p\n", node, internal_node_id, node_type, parent);
+  return node;
 }
 
 
@@ -65,40 +85,24 @@ static TreeNode *newtreeNode()
  * @retval the newly inserted node
  */
 INTERFACE_ATTRIBUTE
-TreeNode *__tsan_insert_tree_node(NodeType nodeType, TreeNode *parent){
-    TreeNode *node = newtreeNode();   
-    node->this_node_type = nodeType;
-    
-    if(nodeType == ROOT){ 
-        node->depth = 0;
-        node->parent = nullptr;
-        dpst.root = node;
-    }
-    else{
-        // each task corresponds to an async or a future tree node
-        // assert(parent);
-        node->parent = parent;
-        node->depth = node->parent->depth + 1;
-        node->is_parent_nth_child = parent->number_of_child;
-        if(nodeType == FINISH){
-            node->corresponding_task_id = parent->corresponding_task_id;
-        }
-        parent->number_of_child += 1;
-
-        if(node->parent->children_list_head == nullptr){
-            node->parent->children_list_head = node;
-            node->parent->children_list_tail = node;
-        }
-        else{
-            node->parent->children_list_tail->next_sibling = node;
-            node->preceeding_taskwait = node->parent->children_list_tail->preceeding_taskwait;
-            node->parent->children_list_tail = node;
-        }   
-    }
-
-    return node;
+TreeNode *__tsan_insert_internal_node(TreeNode *node, TreeNode *parent) {  
+  parent->number_of_child += 1; 
+  if (parent->children_list_head) {
+    parent->children_list_tail->next_sibling = node;
+    parent->children_list_tail = node;
+  } else {
+    parent->children_list_head = node;
+    parent->children_list_tail = node;
+  }
+  return node;
 }
 
+INTERFACE_ATTRIBUTE
+TreeNode *__tsan_alloc_insert_internal_node(int internal_node_id, NodeType node_type, TreeNode *parent, int preceeding_taskwait) {
+  TreeNode *node = __tsan_alloc_internal_node(internal_node_id, node_type, parent, preceeding_taskwait);
+  __tsan_insert_internal_node(node, parent);
+  return node;
+}
 
 /**
  * @brief  Insert a new leaf(step) node to the task_node
@@ -107,24 +111,20 @@ TreeNode *__tsan_insert_tree_node(NodeType nodeType, TreeNode *parent){
  * @retval the newly inserted leaf(step) node
  */
 INTERFACE_ATTRIBUTE
-TreeNode *__tsan_insert_leaf(TreeNode *task_node) {
+TreeNode *__tsan_insert_leaf(TreeNode *parent, int preceeding_taskwait) {
   ThreadState *thr = cur_thread();
-  int preceeding_taskwait =
-      (task_node->children_list_head)
-          ? task_node->children_list_tail->preceeding_taskwait
-          : -1;
   TreeNode &n = step_nodes.EmplaceBack(
-      task_node->corresponding_task_id, STEP, task_node->depth + 1,
-      task_node->number_of_child, preceeding_taskwait, thr->fast_state.sid(), thr->fast_state.epoch(), task_node);
+      STEP, preceeding_taskwait,
+      thr->fast_state.sid(), thr->fast_state.epoch(), parent);
   TreeNode *new_step = &n;
-  task_node->number_of_child += 1;
+  parent->number_of_child += 1;
 
-  if (task_node->children_list_head == nullptr) {
-    task_node->children_list_head = new_step;
-    task_node->children_list_tail = new_step;
+  if (parent->children_list_head == nullptr) {
+    parent->children_list_head = new_step;
+    parent->children_list_tail = new_step;
   } else {
-    task_node->children_list_tail->next_sibling = new_step;
-    task_node->children_list_tail = new_step;
+    parent->children_list_tail->next_sibling = new_step;
+    parent->children_list_tail = new_step;
   }
 
   // u32 step_index = atomic_load(atomic_step_index, memory_order_acquire);
@@ -139,26 +139,23 @@ TreeNode *__tsan_insert_leaf(TreeNode *task_node) {
 
 static void print_node(TreeNode *t) {
   constexpr uptr mask = 0xFFFFUL;
-  Printf("[%s_%lu]", node_desc[t->this_node_type],
-         t->corresponding_step_index ? t->corresponding_step_index : (uptr)t & mask);
+  Printf("[%s_%lu]", node_desc[t->node_type],
+         t->corresponding_id ? t->corresponding_id : (uptr)t & mask);
   TreeNode *p = t->parent;
   if (p) {
-    Printf("(%s_%lu[%u])", node_desc[p->this_node_type],
-           p->corresponding_step_index ? p->corresponding_step_index : (uptr)p & mask,
+    Printf("(%s_%lu[%u])", node_desc[p->node_type],
+           p->corresponding_id ? p->corresponding_id : (uptr)p & mask,
            t->is_parent_nth_child);
   }
 }
 
-static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
-  if (!dpst.root) {
-    return;
-  }
+static void get_DPST_statistics(u32 *counts, int &max_depth, bool print_dpst) {
   if (print_dpst) {
     Printf("DPST Structure: \n");
   }
   Vector<TreeNode *> v1, v2;
   Vector<TreeNode *> *curr = &v1, *next = &v2;
-  curr->PushBack(dpst.root);
+  curr->PushBack(&dpst_root);
   u32 level = 0;
   while (curr->Size()) {
     if (print_dpst) {
@@ -170,7 +167,7 @@ static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
         Printf(" ");
       }
       max_depth = (max_depth < t->depth) ? t->depth : max_depth;
-      counts[t->this_node_type]++;
+      counts[t->node_type]++;
       for (TreeNode *c = t->children_list_head; c != nullptr;
            c = c->next_sibling) {
         next->PushBack(c);
@@ -186,12 +183,12 @@ static void get_dpst_statistics(u32 *counts, int &max_depth, bool print_dpst) {
 }
 
 INTERFACE_ATTRIBUTE
-void __tsan_print_dpst_info(bool print_dpst) {
+void __tsan_print_DPST_info(bool print_dpst) {
   Printf("=============================================================\n");
   u32 node_counts[NODE_TYPE_END]{};
   int max_depth{};
   u32 num_nodes{};
-  get_dpst_statistics(node_counts, max_depth, print_dpst);
+  get_DPST_statistics(node_counts, max_depth, print_dpst);
   Printf("\nDPST Statistics:\n");
   for (u32 i = 0; i < NODE_TYPE_END; i++) {
     Printf("%s nodes: %u\n", node_desc[i], node_counts[i]);

@@ -81,14 +81,14 @@ class Shadow {
     raw_ |= ((static_cast<u32>(is_atomic) << kIsAtomicShift) | (static_cast<u32>(is_read) << kIsReadShift));
   }
   
-  Shadow(bool is_atomic, bool is_freed, u32 addr, u32 size, u32 step_id) {
+  Shadow(bool is_atomic, bool is_freed, u32 addr, u32 size, int step_id) {
     u8 access = ((((1u << size) - 1) << (addr & 0x7)) & 0xff);
     u8 mask = ((access & 0xf0) ? 0x2 : 0x0) | ((access & 0xf) ? 0x1 : 0x0);
 
     u32 raw = static_cast<u32>(is_atomic) << kIsAtomicShift |
               static_cast<u32>(is_freed) << kIsFreeShift |
               static_cast<u32>(mask) << kAccessMaskShift | 
-              step_id;
+              static_cast<u32>(step_id);
     this->raw_ = raw;
   }
 

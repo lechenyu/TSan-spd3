@@ -7,10 +7,12 @@
 enum NodeType {
   ROOT,
   FINISH,
-  ASYNC,
+  ASYNC_I,
+  ASYNC_E,
   FUTURE,
   STEP,
   TASKWAIT,
+  PARALLEL,
   NODE_TYPE_END
 };
 
@@ -19,10 +21,8 @@ enum class Sid : uint8_t {};
 enum class Epoch : uint16_t {};
 typedef struct TreeNode {
  public:
-  // int index;
-  int corresponding_task_id;
-  int corresponding_step_index;
-  NodeType this_node_type;
+  int corresponding_id;
+  NodeType node_type;
   int depth;
   int number_of_child;
   int is_parent_nth_child;
@@ -33,36 +33,79 @@ typedef struct TreeNode {
   TreeNode *children_list_head;
   TreeNode *children_list_tail;
   TreeNode *next_sibling;
-  TreeNode *current_finish_node;
 } TreeNode;
 
-typedef struct finish_t{
-  TreeNode* node_in_dpst;
-  finish_t* parent;
-} finish_t;
-
-typedef struct task_t{
-  // int id;
-  // int parent_id;
-  TreeNode* node_in_dpst;
-  // finish_t* belong_to_finish;
-  finish_t* current_finish;
-  bool initialized;
-} task_t;
-
-static constexpr TreeNode *kNotOpenMPTask = nullptr;
+// static constexpr TreeNode *kNotOpenMPTask = nullptr;
+static constexpr int kNullStepId = -1;
 static constexpr size_t kDefaultStackSize = 1024;
+static TreeNode *root = nullptr;
+static TreeNode kNullTaskWait = {kNullStepId, TASKWAIT};
+
+class task_t;
+class finish_t {
+public:
+  std::atomic<TreeNode *> node_in_dpst;
+  finish_t *parent;
+  task_t *belonging_task;
+public:
+  finish_t(TreeNode *node, finish_t *parent, task_t *task)
+      : node_in_dpst(node), parent(parent), belonging_task(task) {}
+};
+
+class task_t {
+public:
+  TreeNode *node_in_dpst;
+  finish_t *current_finish;
+  finish_t *enclosed_finish;
+  TreeNode *current_taskwait;
+  int current_step_id;
+  bool initialized;
+public:
+  task_t(TreeNode *node, finish_t *enclosed_finish, bool initialized)
+      : node_in_dpst(node), current_finish(nullptr),
+        enclosed_finish(enclosed_finish), current_taskwait(&kNullTaskWait),
+        current_step_id(kNullStepId), initialized(initialized) {}
+};
+
+class parallel_t {
+public:
+  int parallelism;
+  std::atomic<int> remaining_task;
+  task_t *encounter_task;
+public:
+  parallel_t(int parallelism, task_t *task)
+      : parallelism(parallelism), remaining_task(parallelism),
+        encounter_task(task) {}
+  int count_down_on_barrier() {
+    int val = remaining_task.fetch_sub(1, std::memory_order_acq_rel);
+    return val;
+  }
+  void reset_remaining_task() {
+    remaining_task.store(parallelism, std::memory_order_release);
+  }
+};
 
 extern "C" {
 void __attribute__((weak)) __tsan_print();
 
-TreeNode* __attribute__((weak))  __tsan_insert_tree_node(NodeType nodeType, TreeNode *parent);
+TreeNode __attribute__((weak)) *__tsan_init_DPST();
 
-TreeNode* __attribute__((weak))  __tsan_insert_leaf(TreeNode *task_node);
+TreeNode *__attribute__((weak))
+__tsan_alloc_internal_node(int internal_node_id, NodeType node_type, TreeNode *parent, int preceeding_taskwait);
 
-void __attribute__((weak))  __tsan_print_dpst_info(bool print_dpst);
+TreeNode *__attribute__((weak))
+__tsan_insert_internal_node(TreeNode *node, TreeNode *parent);
 
-void __attribute__((weak))  __tsan_set_task_in_tls(TreeNode* node);
+TreeNode *__attribute__((weak))
+__tsan_alloc_insert_internal_node(int internal_node_id, NodeType node_type, TreeNode *parent, int preceeding_taskwait);
+
+TreeNode *__attribute__((weak)) __tsan_insert_leaf(TreeNode *parent, int preceeding_taskwait);
+
+void __attribute__((weak)) __tsan_print_DPST_info(bool print_dpst);
+
+void __attribute__((weak)) __tsan_reset_step_in_tls();
+
+void __attribute__((weak)) __tsan_set_step_in_tls(int step_id);
 
 void __attribute__((weak)) AnnotateNewMemory(const char *f, int l, const volatile void *mem, size_t size);
 } // extern "C"
@@ -106,7 +149,32 @@ ompt_get_task_memory_t ompt_get_task_memory;
 
 
 static std::atomic<int> task_id_counter(1);
+static std::atomic<int> sync_id_counter(1);
 static std::atomic<int> thread_id_counter(0);
+
+static inline int insert_leaf(TreeNode *internal_node, task_t *task) {
+  TreeNode *new_step = __tsan_insert_leaf(internal_node, task->current_taskwait->corresponding_id);
+  int step_id = new_step->corresponding_id;
+  task->current_step_id = step_id;
+  __tsan_set_step_in_tls(step_id);
+  return step_id;
+}
+
+static inline TreeNode *find_parent(task_t *task) {
+  if (task->current_finish) {
+    return task->current_finish->node_in_dpst.load(std::memory_order_acquire);
+  } else {
+    return task->node_in_dpst;
+  }
+}
+
+static inline TreeNode *find_parent(finish_t *finish) {
+  if (finish->parent) {
+    return finish->parent->node_in_dpst.load(std::memory_order_acquire);
+  } else {
+    return finish->belonging_task->node_in_dpst;
+  }
+}
 
 static void ompt_ta_parallel_begin
 (
@@ -118,38 +186,21 @@ static void ompt_ta_parallel_begin
   const void *codeptr_ra
 )
 {
-  assert(encountering_task_data->ptr != nullptr);
   // insert a FINISH node because of the implicit barrier
+  assert(encountering_task_data->ptr != nullptr);
   task_t* current_task = (task_t*) encountering_task_data->ptr;
-  TreeNode* current_task_node = current_task->node_in_dpst;
-
+  TreeNode *parent = find_parent(current_task);
   // 1. Update DPST
-  TreeNode* new_finish_node;
-  if(current_task->current_finish == nullptr){
-    new_finish_node = __tsan_insert_tree_node(FINISH,current_task_node);
-  }
-  else{
-    new_finish_node = __tsan_insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
-  }
-  __tsan_insert_leaf(new_finish_node);
-  __tsan_insert_leaf(new_finish_node->parent);
+  TreeNode *new_finish_node = __tsan_alloc_insert_internal_node(
+      sync_id_counter.fetch_add(1, std::memory_order_relaxed), PARALLEL,
+      parent, current_task->current_taskwait->corresponding_id);
 
   // 2. Set current task's current_finish to this finish
-  finish_t* finish = (finish_t*) malloc(sizeof(finish_t));
-  finish->node_in_dpst = new_finish_node;
-
-  if(current_task->current_finish == nullptr){
-    finish->parent = nullptr;
-  }
-  else{
-    finish->parent = current_task->current_finish;
-  }
-
+  finish_t *finish = new finish_t{
+      new_finish_node, current_task->current_finish, current_task};
   current_task->current_finish = finish;
-  current_task_node->current_finish_node = new_finish_node;
-
-
-  parallel_data->ptr = encountering_task_data->ptr;
+  parallel_data->ptr = new parallel_t(requested_parallelism, current_task);
+  insert_leaf(new_finish_node, current_task);
 }
 
 
@@ -162,20 +213,15 @@ static void ompt_ta_parallel_end
 )
 {
   assert(encountering_task_data->ptr != nullptr);
-
-  // set current_task->current_finish to either nullptr or another finish (nested finish)
   task_t* current_task = (task_t*) encountering_task_data->ptr;
-  finish_t* the_finish = current_task->current_finish;
-
-  if(the_finish->parent == nullptr){
-    current_task->current_finish = nullptr;
-    current_task->node_in_dpst->current_finish_node = nullptr;
-  }
-  else{
-    current_task->current_finish = the_finish->parent;
-    current_task->node_in_dpst->current_finish_node = the_finish->parent->node_in_dpst;
-  }
-  __tsan_set_task_in_tls(current_task->node_in_dpst);
+  finish_t* finish = current_task->current_finish;
+  current_task->current_finish = finish->parent;
+  TreeNode *parent = find_parent(finish);
+  delete finish;
+  parallel_t *parallel = (parallel_t *)parallel_data->ptr;
+  delete parallel;
+  parallel_data->ptr = nullptr;
+  insert_leaf(parent, current_task);
 }
 
 
@@ -191,80 +237,42 @@ static void ompt_ta_implicit_task(
   if (flags & ompt_task_initial) {
     if (endpoint == ompt_scope_begin) {
       printf("OMPT! initial task begins, should only appear once !! \n");
-
-      // DPST operation
-      TreeNode* root = __tsan_insert_tree_node(ROOT,nullptr);
-      __tsan_insert_leaf(root);
-
-      task_t* main_ti = (task_t*) malloc(sizeof(task_t));
-      // main_ti->belong_to_finish = nullptr;
-      // main_ti->id = 0;
-      // main_ti->parent_id = -1;
-      main_ti->node_in_dpst = root;
-      main_ti->initialized = true;
-      root->corresponding_task_id = task_id_counter.fetch_add(1, std::memory_order_relaxed);
-
-      finish_t* main_finish_placeholder = (finish_t*) malloc(sizeof(finish_t));
-      main_finish_placeholder->node_in_dpst = root;
-      main_finish_placeholder->parent = nullptr;
-      main_ti->current_finish = main_finish_placeholder;
-      main_ti->node_in_dpst->current_finish_node = main_finish_placeholder->node_in_dpst;
-
-      task_data->ptr = (void*) main_ti;
-
-      __tsan_set_task_in_tls(root);
+      if (!root) {
+        root = __tsan_init_DPST();
+      }
+      TreeNode *initial = __tsan_alloc_insert_internal_node(
+          sync_id_counter.fetch_add(1, std::memory_order_relaxed), PARALLEL,
+          root, kNullStepId);
+      finish_t *implicit_parallel = new finish_t{initial, nullptr, nullptr};
+      task_t* main_ti = new task_t{root, nullptr, true};
+      main_ti->current_finish = implicit_parallel;
+      implicit_parallel->belonging_task = main_ti;
+      task_data->ptr = main_ti;
+      insert_leaf(initial, main_ti);
     } else if (endpoint == ompt_scope_end) {
-      __tsan_set_task_in_tls(kNotOpenMPTask);
+      task_t *ti = (task_t *)task_data->ptr;
+      delete ti;
+      __tsan_reset_step_in_tls();
     }
-  } else{
+  } else if (flags & ompt_task_implicit) {
     if (endpoint == ompt_scope_begin) {
       assert(parallel_data->ptr != nullptr);
-
-      // A. Get encountering_task information
-      task_t* current_task = (task_t*) parallel_data->ptr;
-      TreeNode* current_task_node = current_task->node_in_dpst;
-
-      // B. DPST operation
-      TreeNode* new_task_node;
-      TreeNode* parent_node;
-
-      if(current_task->current_finish != nullptr){
-        // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
-        parent_node = current_task->current_finish->node_in_dpst;
-      }
-      else{
-        // 2. if current task's current_finish is nullptr, parent_node should be current task's node
-        parent_node = current_task_node;
-      }
-
-      new_task_node = __tsan_insert_tree_node(ASYNC, parent_node);
-
-      __tsan_insert_leaf(new_task_node->parent);
-      __tsan_insert_leaf(new_task_node);
-      new_task_node->corresponding_task_id = task_id_counter.fetch_add(1, std::memory_order_relaxed);
-
-
-      // C. Update task data for new task
-      task_t* ti = (task_t*) malloc(sizeof(task_t));
-      // ti->id = task_id_counter;
-      ti->node_in_dpst = new_task_node;
-      ti->initialized = true;
-      // set new task's belong_to_finish
-      // if(current_task->current_finish != nullptr){
-      //   ti->belong_to_finish = current_task->current_finish;
-      // }
-      // else{
-      //   ti->belong_to_finish = current_task->belong_to_finish;
-      // }
-        
-      task_data->ptr = (void*) ti;
-
-      __tsan_set_task_in_tls(new_task_node);
+      parallel_t *parallel = (parallel_t *) parallel_data->ptr;
+      task_t* parent_task = parallel->encounter_task;
+      TreeNode *parent = find_parent(parent_task);
+      TreeNode *new_task_node = __tsan_alloc_insert_internal_node(
+          task_id_counter.fetch_add(1, std::memory_order_relaxed), ASYNC_I,
+          parent, parent_task->current_taskwait->corresponding_id);
+      finish_t *enclosed_finish = parent_task->current_finish;
+      task_t *ti = new task_t{new_task_node, enclosed_finish, true};
+      task_data->ptr = ti;
+      insert_leaf(new_task_node, ti);
     } else if (endpoint == ompt_scope_end) {
-      __tsan_set_task_in_tls(kNotOpenMPTask);
+      task_t *ti = (task_t *)task_data->ptr;
+      delete ti;
+      __tsan_reset_step_in_tls();
     }
   }
-
 }
 
 
@@ -275,73 +283,77 @@ static void ompt_ta_sync_region(
   ompt_data_t *task_data,
   const void *codeptr_ra)
 {
-  if(kind == ompt_sync_region_taskgroup && endpoint == ompt_scope_begin){
+  if(kind == ompt_sync_region_taskgroup){
     assert(task_data->ptr != nullptr);
-
-    task_t* current_task = (task_t*) task_data->ptr;
-    TreeNode* current_task_node = current_task->node_in_dpst;
-
-    // 1. Update DPST
-    TreeNode* new_finish_node;
-    if(current_task->current_finish == nullptr){
-      new_finish_node = __tsan_insert_tree_node(FINISH,current_task_node);
-    }
-    else{
-      new_finish_node = __tsan_insert_tree_node(FINISH,current_task->current_finish->node_in_dpst);
-    }
-    __tsan_insert_leaf(new_finish_node);
-    __tsan_insert_leaf(current_task_node);
-
-    // 2. Set current task's current_finish to this finish
-    finish_t* new_finish = (finish_t*) malloc(sizeof(finish_t));
-    new_finish->node_in_dpst = new_finish_node;
-
-    if(current_task->current_finish == nullptr){
-      new_finish->parent = nullptr;
-    }
-    else{
-      new_finish->parent = current_task->current_finish;
-    }
-
-    current_task->current_finish = new_finish;
-    current_task_node->current_finish_node = new_finish->node_in_dpst;
-
-  }
-  else if (kind == ompt_sync_region_taskgroup && endpoint == ompt_scope_end )
-  {
-    assert(task_data->ptr != nullptr);
-
-    // set current_task->current_finish to either nullptr or another finish (nested finish)
-    task_t* current_task = (task_t*) task_data->ptr;
-    finish_t* finish = current_task->current_finish;
-
-    if(finish->parent == nullptr){
-      current_task->current_finish = nullptr;
-      current_task->node_in_dpst->current_finish_node = nullptr;
-    }
-    else{
+    task_t *current_task = (task_t *)task_data->ptr;
+    if (endpoint == ompt_scope_begin) {
+      TreeNode *parent = find_parent(current_task);
+      TreeNode *new_finish_node = __tsan_alloc_insert_internal_node(
+          sync_id_counter.fetch_add(1, std::memory_order_relaxed), FINISH,
+          parent, current_task->current_taskwait->corresponding_id);
+      finish_t *new_finish =
+          new finish_t{new_finish_node, current_task->current_finish, current_task};
+      current_task->current_finish = new_finish;
+      insert_leaf(new_finish_node, current_task);
+    } else if (endpoint == ompt_scope_end) {
+      finish_t *finish = current_task->current_finish;
+      TreeNode *parent = find_parent(finish);
       current_task->current_finish = finish->parent;
-      current_task->node_in_dpst->current_finish_node = finish->parent->node_in_dpst;
+      delete finish;
+      insert_leaf(parent, current_task);
     }
-    
-  }
-  else if(kind == ompt_sync_region_taskwait && endpoint == ompt_scope_begin){
+  } else if(kind == ompt_sync_region_taskwait){
     assert(task_data->ptr != nullptr);
-    task_t* current_task = (task_t*) task_data->ptr;
-
-    // insert a single node (type STEP), mark this as a taskwait step
-    TreeNode* new_taskwait_node;
-    if(current_task->current_finish == nullptr){
-      new_taskwait_node = __tsan_insert_tree_node(TASKWAIT, current_task->node_in_dpst);
-      new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
-      __tsan_insert_leaf(current_task->node_in_dpst);
+    task_t *current_task = (task_t *)task_data->ptr;
+    if (endpoint == ompt_scope_begin) {
+      // insert a special node for taskwait, mark this as a taskwait step
+      TreeNode *parent = find_parent(current_task);
+      TreeNode *new_taskwait_node = __tsan_alloc_insert_internal_node(
+          sync_id_counter.fetch_add(1, std::memory_order_relaxed), TASKWAIT,
+          parent, current_task->current_taskwait->corresponding_id);
+      current_task->current_taskwait = new_taskwait_node;
+    } else if (endpoint == ompt_scope_end) {
+      TreeNode *parent = current_task->current_taskwait->parent;
+      insert_leaf(parent, current_task);
     }
-    else{
-      new_taskwait_node = __tsan_insert_tree_node(TASKWAIT, current_task->current_finish->node_in_dpst);
-      new_taskwait_node->preceeding_taskwait = new_taskwait_node->is_parent_nth_child;
-      __tsan_insert_leaf(current_task->current_finish->node_in_dpst);
-    }
+  } else if (kind == ompt_sync_region_reduction) {
+    return;
+  } else {
+    // For all kinds of barriers, split parallel region
+    // Assume barriers are only used in implicit tasks
+    if (endpoint == ompt_scope_begin) {
+      task_t *current_task = (task_t *)task_data->ptr;
+      TreeNode *current_task_node = current_task->node_in_dpst;
+      if (current_task_node->node_type != ASYNC_I) {
+        printf("WARNING: barrier in explicit task\n");
+        return;
+      }
+      finish_t *enclosed_finish = current_task->enclosed_finish;
+      TreeNode *finish_parent = find_parent(enclosed_finish);
 
+      TreeNode *new_parallel;
+      parallel_t *parallel = (parallel_t *)parallel_data->ptr;
+      int remaining_task = parallel->count_down_on_barrier();
+      if (remaining_task == 1) {
+        new_parallel = __tsan_alloc_insert_internal_node(
+            sync_id_counter.fetch_add(1, std::memory_order_relaxed), PARALLEL,
+            finish_parent, enclosed_finish->node_in_dpst.load(std::memory_order_acquire)->preceeding_taskwait);
+        enclosed_finish->node_in_dpst.store(new_parallel, std::memory_order_release);
+        parallel->reset_remaining_task();
+      } else {
+        do {
+          new_parallel = enclosed_finish->node_in_dpst.load(std::memory_order_acquire);
+        } while (new_parallel == current_task_node->parent);
+      }
+
+      TreeNode *new_task_node = __tsan_alloc_insert_internal_node(
+             task_id_counter.fetch_add(1, std::memory_order_relaxed), ASYNC_I,
+             new_parallel, current_task_node->preceeding_taskwait);
+      task_t* ti = new task_t{new_task_node, enclosed_finish, true};
+      task_data->ptr = ti;
+      delete current_task;
+      insert_leaf(new_task_node, ti);
+    }
   }
   
 }
@@ -353,46 +365,17 @@ static void ompt_ta_task_create(ompt_data_t *encountering_task_data,
                                 int has_dependences, const void *codeptr_ra) 
 {
   assert(encountering_task_data->ptr != nullptr);
-
-  // A. Get encountering_task information
-    task_t* current_task = (task_t*) encountering_task_data->ptr;
-    TreeNode* current_task_node = current_task->node_in_dpst;
-
-  // B. DPST operation
-    TreeNode* new_task_node;
-    TreeNode* parent_node;
-
-    if(current_task->current_finish != nullptr){
-      // 1. if current task's current_finish is not nullptr, parent_node should be that finish's node
-      parent_node = current_task->current_finish->node_in_dpst;
-    }
-    else{
-      // 2. if current task's current_finish is nullptr, parent_node should be current task's node
-      parent_node = current_task_node;
-    }
-
-    new_task_node = __tsan_insert_tree_node(ASYNC, parent_node);
-
-    __tsan_insert_leaf(new_task_node->parent);
-    //__tsan_insert_leaf(new_task_node);
-    new_task_node->corresponding_task_id = task_id_counter.fetch_add(1, std::memory_order_relaxed);
-
-  // C. Update task data
-    task_t* ti = (task_t*) malloc(sizeof(task_t));
-    // ti->id = task_id_counter;
-    ti->node_in_dpst = new_task_node;
-    ti->initialized = false;
-
-    // set new task's belong_to_finish
-    // if(current_task->current_finish != nullptr){
-    //   ti->belong_to_finish = current_task->current_finish;
-    // }
-    // else{
-    //   ti->belong_to_finish = current_task->belong_to_finish;
-    // }
-    
-    new_task_data->ptr = (void*) ti;
-
+  task_t* current_task = (task_t*) encountering_task_data->ptr;
+  TreeNode* parent = find_parent(current_task);
+  TreeNode *new_task_node = __tsan_alloc_insert_internal_node(
+      task_id_counter.fetch_add(1, std::memory_order_relaxed), ASYNC_E, parent,
+      current_task->current_taskwait->corresponding_id);
+  finish_t *enclosed_finish = current_task->current_finish
+                                  ? current_task->current_finish
+                                  : current_task->enclosed_finish;
+  task_t *ti = new task_t{new_task_node, enclosed_finish, false};
+  new_task_data->ptr = ti;
+  insert_leaf(parent, current_task);
 }
 
 
@@ -402,14 +385,6 @@ static void ompt_ta_task_schedule(
   ompt_task_status_t prior_task_status,
   ompt_data_t *next_task_data
 ){
-  assert(next_task_data->ptr);
-
-  task_t* next_task = (task_t*) next_task_data->ptr;
-  TreeNode* next_task_node = next_task->node_in_dpst;
-  if (!next_task->initialized) {
-    __tsan_insert_leaf(next_task_node);
-    next_task->initialized = true;
-  }
   // printf("OMPT! task_schedule, put task node in current thread \n");
   // printf("task %d, %p scheduled\n", next_task_node->corresponding_task_id, next_task_node);
   // printf("thread %lu, task %lu\n", ompt_get_thread_data()->value, (uintptr_t)next_task_node & 0xFFFFUL);
@@ -436,9 +411,21 @@ static void ompt_ta_task_schedule(
         block++;
       }
     }
-    
+    if (prior_task_status == ompt_task_complete && prior_task_data) {
+      task_t *prior_ti = (task_t *)prior_task_data->ptr;
+      delete prior_ti;
+    }
   }
-  __tsan_set_task_in_tls(next_task_node);
+  
+  assert(next_task_data->ptr);
+  task_t* next_task = (task_t*) next_task_data->ptr;
+  TreeNode* next_task_node = next_task->node_in_dpst;
+  if (!next_task->initialized) {
+    insert_leaf(next_task_node, next_task);
+    next_task->initialized = true;
+  } else {
+    __tsan_set_step_in_tls(next_task->current_step_id);
+  }
 }
 
 static void ompt_ta_thread_begin(ompt_thread_t thread_type, ompt_data_t *thread_data) {
@@ -470,13 +457,13 @@ static int ompt_tsan_initialize(ompt_function_lookup_t lookup, int device_num,
   SET_CALLBACK(sync_region);
   SET_CALLBACK(parallel_end);
   SET_CALLBACK(task_schedule);
-  // SET_CALLBACK(thread_begin);
+  SET_CALLBACK(thread_begin);
 
   return 1; // success
 }
 
 static void ompt_tsan_finalize(ompt_data_t *tool_data) {
-  __tsan_print_dpst_info(true);
+  //__tsan_print_DPST_info(true);
 }
 
 static bool scan_tsan_runtime() {

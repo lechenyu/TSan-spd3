@@ -5,18 +5,18 @@ namespace __tsan {
 enum NodeType {
   ROOT,
   FINISH,
-  ASYNC,
+  ASYNC_I,
+  ASYNC_E,
   FUTURE,
   STEP,
   TASKWAIT,
+  PARALLEL,
   NODE_TYPE_END
 };
 
 typedef struct TreeNode {
-  // int index;
-  int corresponding_task_id;
-  int corresponding_step_index;
-  NodeType this_node_type;
+  int corresponding_id;
+  NodeType node_type;
   int depth;
   int number_of_child;
   int is_parent_nth_child;
@@ -27,7 +27,6 @@ typedef struct TreeNode {
   TreeNode *children_list_head;
   TreeNode *children_list_tail;
   TreeNode *next_sibling;
-  TreeNode *current_finish_node;
   // TreeNode() = default;
   // TreeNode(int task_id, int step_index, NodeType type, int depth, int nth_child,
   //          int preceeding_taskwait, TreeNode *parent)
@@ -46,15 +45,15 @@ typedef struct TreeNode {
 } TreeNode;
 
 
-class DPST{
- public:
-  TreeNode *root;
-  TreeNode *current_step_node;
-  DPST() {
-    this->root = nullptr;
-    this->current_step_node = nullptr;
-  }
-};
+// class DPST{
+//  public:
+//   TreeNode *root;
+//   TreeNode *current_step_node;
+//   DPST() {
+//     this->root = nullptr;
+//     this->current_step_node = nullptr;
+//   }
+// };
 
 // extern struct dpst DPST;
 

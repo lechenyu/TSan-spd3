@@ -49,23 +49,23 @@ ConcurrencyVector step_nodes(vector_fix_size);
 
 
 /**
- * @brief  Get the current step node, and return its corresponding_step_index
- * @note   node->corresponding_step_index and node->index are different
+ * @brief  Get the current step node, and return its corresponding_id (step id)
  * @param  thr: current ThreadState*
- * @retval the corresponding_step_index of current step node
+ * @retval the corresponding_id of current step node
  */
-static u32 get_current_step_id(ThreadState* thr) {
-  TreeNode *current_task_node = thr->current_task_node;
+static int get_current_step_id(ThreadState* thr) {
+  // TreeNode *current_task_node = thr->current_task_node;
 
-  if(current_task_node == nullptr){
-    return kNullStepId;
-  }
+  // if(current_task_node == nullptr){
+  //   return kNullStepId;
+  // }
 
-  if(current_task_node->current_finish_node == nullptr){
-    return current_task_node->children_list_tail->corresponding_step_index;
-  }
+  // if(current_task_node->current_finish_node == nullptr){
+  //   return current_task_node->children_list_tail->corresponding_id;
+  // }
 
-  return current_task_node->current_finish_node->children_list_tail->corresponding_step_index;
+  // return current_task_node->current_finish_node->children_list_tail->corresponding_id;
+  return thr->step_id;
 }
 
 
@@ -102,9 +102,12 @@ static bool precede_dpst_new(TreeNode *prev, TreeNode *curr, TreeNode **lca, Tre
     *left = (prev->is_parent_nth_child > curr->is_parent_nth_child) ? curr : prev;
   }
 
-  if ((prev->is_parent_nth_child > curr->is_parent_nth_child) ||
-      (prev->this_node_type == ASYNC &&
-       prev->is_parent_nth_child > curr->preceeding_taskwait)) {
+  if (prev->is_parent_nth_child > curr->is_parent_nth_child) {
+    return false;
+  }
+
+  if ((prev->node_type == ASYNC_I || prev->node_type == ASYNC_E) &&
+       prev->is_parent_nth_child > curr->preceeding_taskwait) {
     return false;
   } else {
     return true;
@@ -548,14 +551,17 @@ enum RaceType {
   AccessFreedMem = 4
 };
 
-static const char* kRaceTypeName[] = {"write-write-race", "write-read-race",
-                                      "read-write-race", "", "use-after-free"};
+// static const char* kRaceTypeName[] = {"write-write-race", "write-read-race",
+//                                       "read-write-race", "", "use-after-free"};
 
 NOINLINE void DoReportRaceDPST(ThreadState *thr, RawShadow* shadow_mem, Shadow cur, Shadow prev, RaceType race_type, AccessType typ, uptr addr, uptr pc) {
   if (!flags()->report_bugs || thr->suppress_reports) {
     return;
   }
-  
+  if ((prev.is_atomic() && cur.is_atomic()) || !(prev.access_mask() & cur.access_mask())) {
+    return;
+  }
+
   u32 curr_step_id = cur.step_id();
   u32 prev_step_id = prev.step_id();
   const TreeNode &curr_step = step_nodes[curr_step_id];
@@ -684,7 +690,7 @@ bool CheckRead(ThreadState* thr, RawShadow* shadow_mem, Shadow cur,
 
 ALWAYS_INLINE USED void MemoryAccess(ThreadState* thr, uptr pc, uptr addr,
                                      uptr size, AccessType typ) {
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
@@ -749,7 +755,7 @@ void RestartMemoryAccess16(ThreadState* thr, uptr pc, uptr addr,
 
 ALWAYS_INLINE USED void MemoryAccess16(ThreadState* thr, uptr pc, uptr addr,
                                        AccessType typ) {
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
@@ -788,7 +794,7 @@ void RestartUnalignedMemoryAccess(ThreadState* thr, uptr pc, uptr addr,
 ALWAYS_INLINE USED void UnalignedMemoryAccess(ThreadState* thr, uptr pc,
                                               uptr addr, uptr size,
                                               AccessType typ) {
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
@@ -897,7 +903,7 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
   // if it happens to match a real free in the thread trace,
   // but the heap block was reallocated before the current memory access,
   // so it's still good to access. It's not the case with data races.
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
@@ -920,7 +926,7 @@ void MemoryRangeFreed(ThreadState* thr, uptr pc, uptr addr, uptr size) {
 }
 
 void MemoryRangeImitateWrite(ThreadState* thr, uptr pc, uptr addr, uptr size) {
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
@@ -962,7 +968,7 @@ NOINLINE void RestartMemoryAccessRange(ThreadState* thr, uptr pc, uptr addr,
 
 template <bool is_read>
 void MemoryAccessRangeT(ThreadState* thr, uptr pc, uptr addr, uptr size) {
-  u32 curr_step_id = get_current_step_id(thr);
+  int curr_step_id = get_current_step_id(thr);
   if (curr_step_id == kNullStepId) {
     return;
   }
