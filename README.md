@@ -44,7 +44,7 @@ section, we list the details of OpenMP constructs handling by TSan-SPD3.
     
     `export LD_LIBRARY_PATH="<UNFOLDED_LLVM_DIR>/lib:$LD_LIBRARY_PATH"`
 
-### Retrieve TSan-SPD3 repository and configure cmake after
+### Retrieve TSan-SPD3's repository and configure `cmake`
 Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<REPO_DIR>` before executing following commands.
 
     git clone https://github.com/lechenyu/TSan-spd3.git <REPO_DIR>
