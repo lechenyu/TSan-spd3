@@ -35,7 +35,7 @@ section, we list the details of OpenMP constructs handling by TSan-SPD3.
 | `depend` |
 
 ## Install TSan-SPD3
-### Prerequisite: install the bootstrapping compiler clang/llvm 15
+### Prerequisite: install the bootstrapping compiler llvm-15
 1. Retrieve the `clang+llvm-15*` package from the [official repository](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.0).
 2. Unfold the package and set the following environment variables.
 
@@ -44,7 +44,7 @@ section, we list the details of OpenMP constructs handling by TSan-SPD3.
     
     `export LD_LIBRARY_PATH="<UNFOLDED_LLVM_DIR>/lib:$LD_LIBRARY_PATH"`
 
-### Retrieve TSan-SPD3's repository and configure `cmake`
+### Retrieve TSan-SPD3's repository and configure CMake
 Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<REPO_DIR>` before executing following commands.
 
     git clone https://github.com/lechenyu/TSan-spd3.git <REPO_DIR>
