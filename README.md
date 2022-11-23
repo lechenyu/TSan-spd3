@@ -1,10 +1,10 @@
 # TSan-SPD3 Data Race Detector
 TSan-SPD3 is a dynamic race detector for OpenMP programs. It is implemented on top of the ThreadSanitizer (TSan), 
 reusing the majority of TSan's infrastructure, e.g., shadow memory and bug report. TSan-SPD3 leverages the 
-[Scalable Precise Dynamic Datarace Detection (SPD3)](https://dl.acm.org/doi/pdf/10.1145/2345156.2254127) algorithm 
-which was proposed by Raghavan Raman et al in PLDI'12. Although originally designed for async-finish task parallelism,
+[Scalable Precise Dynamic Datarace Detection (SPD3)](https://dl.acm.org/doi/pdf/10.1145/2345156.2254127) algorithm, 
+which was proposed by Raghavan Raman et al. in PLDI'12. Although initially designed for async-finish task parallelism,
 SPD3 can be applied to OpenMP programs. TSan-SPD3 can precisely identify all potential data races under the given input 
-if these programs only use the subset of supported OpenMP constructs; otherwise TSan-SPD3 may report false positives 
+if these programs only use the subset of supported OpenMP constructs; otherwise, TSan-SPD3 may report false positives 
 due to its incapability of encoding happens-before relations related to those unsupported constructs. In the following 
 section, we list the details of OpenMP constructs handling by TSan-SPD3.
 
@@ -39,11 +39,15 @@ section, we list the details of OpenMP constructs handling by TSan-SPD3.
 1. Retrieve the `clang+llvm-15*` package from the [official repository](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.0).
 2. Unfold the package and set the following environment variables.
 
-    export PATH="<UNFOLDED_LLVM_DIR>/bin:$PATH"
-    export LD_LIBRARY_PATH="<UNFOLDED_LLVM_DIR>:$LD_LIBRARY_PATH"
 
-### Configure cmake
+    `export PATH="<UNFOLDED_LLVM_DIR>/bin:$PATH"`
+    
+    `export LD_LIBRARY_PATH="<UNFOLDED_LLVM_DIR>/lib:$LD_LIBRARY_PATH"`
 
+### Retrieve TSan-SPD3 repository and configure cmake after
+Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<REPO_DIR>` before executing following commands.
+
+    git clone https://github.com/lechenyu/TSan-spd3.git <REPO_DIR>
     mkdir <BUILD_DIR> && cd <BUILD_DIR>
     cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_COMPILER=clang \
@@ -58,16 +62,16 @@ section, we list the details of OpenMP constructs handling by TSan-SPD3.
       -DLLVM_INSTALL_UTILS=ON \
       -DLIBOMPTARGET_BUILD_CUDA_PLUGIN=False \
       -DLIBOMPTARGET_BUILD_AMDGPU_PLUGIN=False \
-      <LLVM_SOURCE_DIR>
+      <REPO_DIR>
 
-### Build with Ninja and Install
+### Build with Ninja and install
     cd <BUILD_DIR> && ninja -j 10 install
     export PATH="<INSTALL_DIR>/bin:$PATH"
     export LD_LIBRARY_PATH="<INSTALL_DIR>/lib:$LD_LIBRARY_PATH"
 
 ## Use TSan-SPD3
 The usage of TSan-SPD3 is similar to TSan/[Archer](https://github.com/llvm/llvm-project/tree/main/openmp/tools/archer).
-To compile an OpenMP program with TSan-SPD3 enabled, the extra flag`-fsanitize=thread` should be set on the commandline.
+To compile an OpenMP program with TSan-SPD3 enabled, the extra flag`-fsanitize=thread` should be set on the command line.
 
     clang -O3 -g -fopenmp -fsanitize=thread app.c
     clang++ -O3 -g -fopenmp -fsanitize=thread app.cpp
