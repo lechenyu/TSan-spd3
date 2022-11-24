@@ -35,8 +35,9 @@ section, we list the details of OpenMP constructs handling by TSan-spd3.
 | `depend` |
 
 ## Install TSan-spd3
-### Prerequisite: install the bootstrapping compiler llvm-15
-1. Retrieve the `clang+llvm-15*` package from the [official repository](https://github.com/llvm/llvm-project/releases/tag/llvmorg-15.0.0).
+### Prerequisite: install the bootstrapping llvm compiler
+1. Retrieve a `clang+llvm*` binary package from the [official website](https://releases.llvm.org/download.html) according to your OS's architecture.
+    * For x86_64 architecture, we have tested the installation using [`clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz`](https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.0/clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz).
 2. Unfold the package and set the following environment variables.
 
 
@@ -45,9 +46,10 @@ section, we list the details of OpenMP constructs handling by TSan-spd3.
     `export LD_LIBRARY_PATH="<UNFOLDED_LLVM_DIR>/lib:$LD_LIBRARY_PATH"`
 
 ### Retrieve TSan-spd3's repository and configure CMake
-Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<REPO_DIR>` before executing following commands.
+Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<TSAN_SPD3_REPO_DIR>` with the desired paths on your platform. The CMake setting in the following command lines turns
+off [OpenMP device offloading](https://www.olcf.ornl.gov/wp-content/uploads/2021/08/ITOpenMP_Day1.pdf) support for Nvidia and AMD GPUs since TSan-spd3 cannot tackle memory accesses on non-host devices.
 
-    git clone https://github.com/lechenyu/TSan-spd3.git <REPO_DIR>
+    git clone https://github.com/lechenyu/TSan-spd3.git <TSAN_SPD3_REPO_DIR>
     mkdir <BUILD_DIR> && cd <BUILD_DIR>
     cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_COMPILER=clang \
@@ -57,12 +59,14 @@ Replace `<BUILD_DIR>`, `<INSTALL_DIR>`, and `<REPO_DIR>` before executing follow
       -DLLVM_LIT_ARGS="-sv -j12" \
       -DCLANG_DEFAULT_CXX_STDLIB=libc++ \
       -DLIBOMPTARGET_ENABLE_DEBUG=ON \
-      -DLLVM_ENABLE_PROJECTS="clang;compiler-rt;libcxxabi;libcxx;libunwind;clang-tools-extra;openmp" \
+      -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra" \
+      -DLLVM_ENABLE_RUNTIMES="libunwind;libcxxabi;libcxx;compiler-rt;openmp" \
       -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
       -DLLVM_INSTALL_UTILS=ON \
       -DLIBOMPTARGET_BUILD_CUDA_PLUGIN=False \
       -DLIBOMPTARGET_BUILD_AMDGPU_PLUGIN=False \
-      <REPO_DIR>
+      -DLIBOMPTARGET_AMDGCN_GFXLIST="" \
+      <TSAN_SPD3_REPO_DIR>/llvm
 
 ### Build with Ninja and install
     cd <BUILD_DIR> && ninja -j 10 install
@@ -84,13 +88,7 @@ To avoid false alerts due to the OpenMP runtime implementation, set the TSan opt
 This is the evaluation results of the latest TSan-spd3. These results may change in the future since we are actively updating 
 TSan-spd3 to tackle more OpenMP constructs.
 
-<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
-
-<colgroup>
-<col  class="org-left" />
-<col  class="org-right" />
-</colgroup>
-
+<table cellspacing="0" cellpadding="6">
 <tbody>
 <tr>
 <td class="org-left">False Positive</td>
