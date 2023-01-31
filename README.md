@@ -112,3 +112,12 @@ TSan-spd3 to tackle more OpenMP constructs.
 </tr>
 </tbody>
 </table>
+
+## Citing TSan-spd3
+If you are referring to TSan-spd3 in a publication, please cite the following paper.
+```
+@article{yuleveraging,
+  title={Leveraging the Dynamic Program Structure Tree to Detect Data Races in OpenMP Programs},
+  author={Yu, Lechen and Jin, Feiyang and Protze, Joachim and Sarkar, Vivek}
+}
+```
