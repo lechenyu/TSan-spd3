@@ -74,7 +74,7 @@ off [OpenMP device offloading](https://www.olcf.ornl.gov/wp-content/uploads/2021
     export LD_LIBRARY_PATH="<INSTALL_DIR>/lib:$LD_LIBRARY_PATH"
 
 ## Use TSan-spd3
-The usage of TSan-spd3 is similar to TSan/[Archer](https://github.com/llvm/llvm-project/tree/main/openmp/tools/archer).
+The usage of TSan-spd3 is similar to [TSan](https://github.com/google/sanitizers/wiki/ThreadSanitizerCppManual)/[Archer](https://github.com/llvm/llvm-project/tree/main/openmp/tools/archer).
 To compile an OpenMP program with TSan-spd3 enabled, the extra flag`-fsanitize=thread` should be set on the command line.
 
     clang -O3 -g -fopenmp -fsanitize=thread app.c
