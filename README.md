@@ -116,8 +116,12 @@ TSan-spd3 to tackle more OpenMP constructs.
 ## Citing TSan-spd3
 If you are referring to TSan-spd3 in a publication, please cite the following paper.
 ```
-@article{yuleveraging,
+@inproceedings{yu2022leveraging,
   title={Leveraging the Dynamic Program Structure Tree to Detect Data Races in OpenMP Programs},
-  author={Yu, Lechen and Jin, Feiyang and Protze, Joachim and Sarkar, Vivek}
+  author={Yu, Lechen and Jin, Feiyang and Protze, Joachim and Sarkar, Vivek},
+  booktitle={2022 IEEE/ACM Sixth International Workshop on Software Correctness for HPC Applications (Correctness)},
+  pages={54--62},
+  year={2022},
+  organization={IEEE}
 }
 ```
